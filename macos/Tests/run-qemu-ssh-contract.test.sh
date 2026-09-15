@@ -62,7 +62,8 @@ fi
 if [[ ${1:-} == --bridge-native-audio \
    || ${1:-} == --bridge-native-authentication \
    || ${1:-} == --bridge-native-clipboard \
-   || ${1:-} == --bridge-native-camera ]]; then
+   || ${1:-} == --bridge-native-camera \
+   || ${1:-} == --bridge-native-battery ]]; then
   while kill -0 "$2" 2>/dev/null; do
     sleep 0.02
   done
@@ -463,6 +464,10 @@ assert_contains "$disabled_qemu" \
   'socket,id=omarchy-authentication-bridge,path='
 assert_contains "$disabled_qemu" \
   'virtserialport,bus=omarchy-serial.0,nr=3,chardev=omarchy-authentication-bridge,name=dev.tryomarchy.authentication'
+assert_contains "$disabled_qemu" \
+  'socket,id=omarchy-battery-bridge,path='
+assert_contains "$disabled_qemu" \
+  'virtserialport,bus=omarchy-serial.0,nr=5,chardev=omarchy-battery-bridge,name=dev.tryomarchy.battery'
 assert_contains "$(<"$test_root/disabled/storage.log")" select-existing
 assert_contains "$(<"$test_root/disabled/storage.log")" create
 assert_line_pair "$test_root/disabled/qemu.log" -smp '8,sockets=1,cores=8,threads=1'

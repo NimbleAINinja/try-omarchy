@@ -368,6 +368,7 @@ runtime = exact_keys(
     {
         "audio",
         "authentication",
+        "battery",
         "camera",
         "clipboard",
         "compressedDisk",
@@ -477,6 +478,14 @@ camera = {
     "protocolVersion": 1,
     "width": 1280,
 }
+battery = {
+    "activation": "always-on",
+    "device": "virtserialport",
+    "direction": "host-to-guest",
+    "guestSupplies": ["ADP0", "BAT0"],
+    "port": "dev.tryomarchy.battery",
+    "protocolVersion": 1,
+}
 storage = {
     "device": "virtio-blk-pci",
     "format": "raw",
@@ -498,6 +507,7 @@ if (
     or runtime.get("network") != network
     or runtime.get("audio") != audio
     or runtime.get("camera") != camera
+    or runtime.get("battery") != battery
     or runtime.get("storage") != storage
     or runtime.get("clipboard") != clipboard
     or runtime.get("authentication") != authentication
@@ -1072,6 +1082,7 @@ qemu_pid=""
 audio_bridge_pid=""
 authentication_bridge_pid=""
 camera_bridge_pid=""
+battery_bridge_pid=""
 clipboard_bridge_pid=""
 network_link_bridge_pid=""
 
@@ -1112,6 +1123,9 @@ cleanup() {
   fi
   if [[ $camera_bridge_pid =~ ^[0-9]+$ ]]; then
     terminate_child "$camera_bridge_pid" 20
+  fi
+  if [[ $battery_bridge_pid =~ ^[0-9]+$ ]]; then
+    terminate_child "$battery_bridge_pid" 20
   fi
   if [[ $clipboard_bridge_pid =~ ^[0-9]+$ ]]; then
     terminate_child "$clipboard_bridge_pid" 20
@@ -1372,6 +1386,7 @@ qmp_socket="/tmp/${work_dir##*/}/qmp.sock"
 audio_bridge_socket="/tmp/${work_dir##*/}/audio.sock"
 authentication_bridge_socket="/tmp/${work_dir##*/}/authentication.sock"
 camera_bridge_socket="/tmp/${work_dir##*/}/camera.sock"
+battery_bridge_socket="/tmp/${work_dir##*/}/battery.sock"
 clipboard_bridge_socket="/tmp/${work_dir##*/}/clipboard.sock"
 audio_route_dir="/tmp/${work_dir##*/}/audio-routes"
 mkdir -m 700 "$work_dir/audio-routes"
@@ -1564,6 +1579,8 @@ qemu_args=(
   -device 'virtserialport,bus=omarchy-serial.0,nr=3,chardev=omarchy-authentication-bridge,name=dev.tryomarchy.authentication'
   -chardev "socket,id=omarchy-camera-bridge,path=$camera_bridge_socket,server=on,wait=off"
   -device 'virtserialport,bus=omarchy-serial.0,nr=4,chardev=omarchy-camera-bridge,name=dev.tryomarchy.camera'
+  -chardev "socket,id=omarchy-battery-bridge,path=$battery_bridge_socket,server=on,wait=off"
+  -device 'virtserialport,bus=omarchy-serial.0,nr=5,chardev=omarchy-battery-bridge,name=dev.tryomarchy.battery'
 )
 
 if [[ -n $shared_folder ]]; then
@@ -1600,6 +1617,8 @@ if [[ ${OMARCHY_QEMU_GPU_DRY_RUN:-0} == 1 ]]; then
     "$native_bridge" "$authentication_bridge_socket" >&2
   printf '\n[qemu-gpu] camera bridge command: %q --bridge-native-camera QEMU_PID %q' \
     "$native_bridge" "$camera_bridge_socket" >&2
+  printf '\n[qemu-gpu] battery bridge command: %q --bridge-native-battery QEMU_PID %q' \
+    "$native_bridge" "$battery_bridge_socket" >&2
   if [[ -n $shared_folder ]]; then
     printf '\n[qemu-gpu] shared folder: %q' "$shared_folder" >&2
   else
@@ -1629,7 +1648,7 @@ printf '%s\n' "$qemu_pid" >"$work_dir/.qemu.pid"
 chmod 600 "$work_dir/.qemu.pid"
 
 for ((attempt = 0; attempt < 100; attempt++)); do
-  if [[ -S $qmp_socket && -S $audio_bridge_socket && -S $authentication_bridge_socket && -S $camera_bridge_socket && -S $clipboard_bridge_socket ]]; then
+  if [[ -S $qmp_socket && -S $audio_bridge_socket && -S $authentication_bridge_socket && -S $camera_bridge_socket && -S $battery_bridge_socket && -S $clipboard_bridge_socket ]]; then
     break
   fi
   kill -0 "$qemu_pid" 2>/dev/null || fail "QEMU exited before creating its private QMP socket"
@@ -1639,6 +1658,7 @@ done
 [[ -S $audio_bridge_socket ]] || fail "QEMU did not create its private audio bridge socket"
 [[ -S $authentication_bridge_socket ]] || fail "QEMU did not create its private authentication bridge socket"
 [[ -S $camera_bridge_socket ]] || fail "QEMU did not create its private camera bridge socket"
+[[ -S $battery_bridge_socket ]] || fail "QEMU did not create its private battery bridge socket"
 [[ -S $clipboard_bridge_socket ]] || fail "QEMU did not create its private clipboard bridge socket"
 echo "[qemu-gpu] Ready. QMP: $qmp_socket" >&2
 
@@ -1677,6 +1697,14 @@ start_camera_bridge() {
 }
 start_camera_bridge
 camera_bridge_restarts=0
+
+start_battery_bridge() {
+  "$native_bridge" --bridge-native-battery \
+    "$qemu_pid" "$battery_bridge_socket" 9>&- &
+  battery_bridge_pid=$!
+}
+start_battery_bridge
+battery_bridge_restarts=0
 
 # Bash 3.2 has no `wait -n`. The native-audio bridge is required for the guest
 # transport, so watch it alongside QEMU and fail if it exits unexpectedly.
@@ -1771,6 +1799,27 @@ while true; do
       fi
     fi
   fi
+  # Battery mirroring is optional. A failed IOKit backend must not stop the
+  # VM; reconnect it so a transient failure can recover in this session.
+  if [[ $battery_bridge_pid =~ ^[0-9]+$ ]]; then
+    battery_bridge_state=$(ps -p "$battery_bridge_pid" -o state= 2>/dev/null || true)
+    if [[ -z $battery_bridge_state || $battery_bridge_state == *Z* ]]; then
+      if wait "$battery_bridge_pid"; then
+        battery_bridge_status=0
+      else
+        battery_bridge_status=$?
+      fi
+      battery_bridge_pid=""
+      if (( battery_bridge_restarts < 5 )); then
+        battery_bridge_restarts=$((battery_bridge_restarts + 1))
+        echo "[qemu-gpu] battery bridge exited (status $battery_bridge_status); restarting ($battery_bridge_restarts/5)" >&2
+        sleep 1
+        start_battery_bridge
+      else
+        echo "[qemu-gpu] battery mirroring is unavailable for the rest of this session" >&2
+      fi
+    fi
+  fi
   sleep 0.1
 done
 
@@ -1805,4 +1854,8 @@ if [[ $camera_bridge_pid =~ ^[0-9]+$ ]]; then
   terminate_child "$camera_bridge_pid" 20
 fi
 camera_bridge_pid=""
+if [[ $battery_bridge_pid =~ ^[0-9]+$ ]]; then
+  terminate_child "$battery_bridge_pid" 20
+fi
+battery_bridge_pid=""
 exit "$qemu_status"

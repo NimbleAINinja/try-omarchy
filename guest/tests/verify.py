@@ -828,6 +828,27 @@ def main() -> None:
         and "com.apple.security.device.camera" in camera_entitlements,
         "Mac launcher carries the camera entitlement and supervised virtio bridge",
     )
+    battery = spec["runtime"]["battery"]
+    check(
+        battery
+        == {
+            "activation": "always-on",
+            "device": "virtserialport",
+            "direction": "host-to-guest",
+            "guestSupplies": ["ADP0", "BAT0"],
+            "port": "dev.tryomarchy.battery",
+            "protocolVersion": 1,
+        },
+        "battery contract mirrors the Mac battery one way over virtio",
+    )
+    battery_launcher = read(REPO / "macos/run-qemu-gpu.sh")
+    check(
+        "virtserialport,bus=omarchy-serial.0,nr=5" in battery_launcher
+        and "name=dev.tryomarchy.battery" in battery_launcher
+        and "--bridge-native-battery" in battery_launcher
+        and "battery_bridge_restarts < 5" in battery_launcher,
+        "Mac launcher carries the supervised battery virtio bridge",
+    )
     check(
         '"$root/usr/local/bin/omarchy-native-mac-share"' in configure
         and "default.target.wants/omarchy-native-mac-share-link.service" in configure,
