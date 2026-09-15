@@ -77,6 +77,19 @@ is reading the camera. Camera permission, capture failure, or device removal is
 non-fatal to the VM; the launcher can restart the optional bridge without
 restarting Omarchy.
 
+A further virtio-serial port (`dev.tryomarchy.battery`) mirrors the Mac's
+battery into the guest. A Swift bridge watches IOKit power sources and sends
+complete JSON snapshots — percentage, charge state, AC presence, and time
+estimates — on every change and every 30 seconds. A root guest agent writes
+each snapshot as one line into a small DKMS `power_supply` module, which
+presents `BAT0` and `ADP0` under `/sys/class/power_supply`, so UPower and the
+Omarchy bar treat the VM as the laptop it runs on. The guest can only request
+a refresh; nothing it sends can change Mac power state. A UPower drop-in keeps
+the guest from acting on a critical battery — warnings appear, the Mac decides.
+On a Mac with no internal battery the guest sees only mains power and the bar
+shows nothing. See [host battery](host-battery.md) for the protocol, the sysfs
+contract, and how to retrofit an existing guest without a factory reset.
+
 A root-only authentication port
 (`dev.tryomarchy.authentication`) lets the guest's `sudo` PAM policy request a
 fixed-purpose macOS Touch ID prompt. Enrollment creates a non-exportable P-256
