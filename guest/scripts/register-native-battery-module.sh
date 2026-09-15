@@ -62,6 +62,14 @@ esac
 [[ -f $pacman_config ]] || fail "pacman config not found: $pacman_config"
 root=$(cd "$root" && pwd -P)
 work=$(cd "$work" && pwd -P)
+case "$root" in
+  /|/bin|/boot|/etc|/home|/opt|/root|/usr|/var)
+    fail "refusing canonical unsafe root: $root"
+    ;;
+esac
+[[ $root != "$work" && $work != "$root/"* ]] || fail "work directory must be outside the staged root"
+[[ $root != *$'\n'* && $work != *$'\n'* ]] || fail "root and work paths cannot contain newlines"
+
 for command in bsdtar find gzip install pacman python3 sha256sum sort tar touch zstd; do
   command -v "$command" >/dev/null || fail "$command is required"
 done
