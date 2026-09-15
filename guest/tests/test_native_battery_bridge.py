@@ -59,7 +59,7 @@ class DecodeTests(unittest.TestCase):
             state(state="melting"),
             state(timeToEmptySeconds=-5),
             json.dumps({"type": "state", "present": True}).encode(),
-            state() + b',"extra":1}'[:0] + b"garbage",
+            state() + b"garbage",
         ):
             with self.assertRaises(ValueError):
                 bridge.decode_message(line)

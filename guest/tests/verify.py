@@ -1334,9 +1334,10 @@ def main() -> None:
     )
     check(
         "ConditionPathExists=/dev/virtio-ports/dev.tryomarchy.battery" in battery_unit
+        and "ConditionPathExists=/sys/devices/platform/try-omarchy-battery/state" in battery_unit
         and "Restart=always" in battery_unit
         and "StartLimitIntervalSec=0" in battery_unit,
-        "battery agent follows the virtio port and keeps retrying",
+        "battery agent follows the virtio port and the module, and keeps retrying",
     )
     battery_rule = read(GUEST / "native-overlay/etc/udev/rules.d/95-omarchy-native-battery.rules")
     check(
@@ -1364,9 +1365,20 @@ def main() -> None:
         and "power_supply_unregister" in module_source,
         "battery module exposes BAT0/ADP0 behind a root-only state attribute",
     )
+    dkms_conf = read(GUEST / "native-module/try-omarchy-battery/dkms.conf")
     check(
-        'PACKAGE_VERSION="1.0.0"' in read(GUEST / "native-module/try-omarchy-battery/dkms.conf"),
+        'PACKAGE_VERSION="1.0.0"' in dkms_conf,
         "battery module DKMS version matches the spec pin",
+    )
+    # DKMS always passes KERNELRELEASE on its make command line, which selects
+    # the Makefile's kbuild branch — a branch with no `modules` target. The
+    # build line must drive kbuild directly instead.
+    make_line = next(
+        (line for line in dkms_conf.splitlines() if line.startswith("MAKE[0]=")), ""
+    )
+    check(
+        "-C ${kernel_source_dir}" in make_line and " M=" in make_line,
+        "battery module DKMS build line drives kbuild directly",
     )
     finalize = read(GUEST / "scripts/finalize-rootfs.sh")
     check(
@@ -1400,9 +1412,7 @@ def main() -> None:
         "retrofit script installs all eight battery files to their real system paths",
     )
     check(
-        "dkms install try-omarchy-battery/1.0.0" in retrofit
-        and "systemctl enable --now omarchy-native-battery-bridge.service" in retrofit
-        and retrofit.index("dkms install try-omarchy-battery/1.0.0")
+        retrofit.index("dkms install try-omarchy-battery/1.0.0")
         < retrofit.index("systemctl enable --now omarchy-native-battery-bridge.service"),
         "retrofit script builds the DKMS module before enabling the service that depends on it",
     )

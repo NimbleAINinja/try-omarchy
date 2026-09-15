@@ -77,6 +77,18 @@ import Testing
         #expect(snapshot.state == "unknown")
     }
 
+    @Test func absentInternalBatteryIsSkipped() {
+        // The predicate accepts a missing "Is Present" key but must reject an
+        // explicit false, or a removed battery would be mirrored as present.
+        var absent = description()
+        absent["Is Present"] = false
+        let snapshot = HostBatterySnapshot(descriptions: [absent])
+        #expect(!snapshot.present)
+        #expect(snapshot.percentage == nil)
+        #expect(snapshot.state == "unknown")
+        #expect(snapshot.acConnected)
+    }
+
     @Test func percentageIsScaledByMaxCapacity() {
         let snapshot = HostBatterySnapshot(descriptions: [
             description(percent: 40, max: 80)
