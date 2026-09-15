@@ -21,7 +21,7 @@ Omarchy's trademark rights.
 - Resizable native window with automatic guest resolution and HiDPI scale updates
 - Mac audio input/output selection inside Omarchy, with live routing and system-default fallback
 - FaceTime HD and other Mac cameras exposed to Omarchy as an on-demand 720p webcam
-- The Mac's battery, charge state, and time estimates mirrored into the Omarchy bar
+- The Mac's battery charge and charging state mirrored into the Omarchy bar
 - Two-way clipboard sharing for text and PNG images between macOS and Omarchy
 - One optional shared Mac folder, available inside Omarchy under the same name (`~/Work` stays `~/Work`)
 - Loopback-only TCP and UDP port forwarding from the Mac into Omarchy
