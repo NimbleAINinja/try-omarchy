@@ -1378,6 +1378,13 @@ def main() -> None:
         "omarchy-native-battery-bridge" in configure,
         "battery agent is made executable during rootfs configuration",
     )
+    retrofit = read(GUEST / "scripts/install-battery-into-existing-guest.sh")
+    check(
+        "dkms install try-omarchy-battery/1.0.0" in retrofit
+        and "systemctl enable --now omarchy-native-battery-bridge.service" in retrofit
+        and "curl" not in retrofit,
+        "existing guests retrofit the battery from staged files, never the network",
+    )
     mac_share = GUEST / "native-overlay/usr/local/bin/omarchy-native-mac-share"
     check(mac_share.stat().st_mode & stat.S_IXUSR != 0, "native Mac share mounter is executable")
     with tempfile.TemporaryDirectory() as temporary:
