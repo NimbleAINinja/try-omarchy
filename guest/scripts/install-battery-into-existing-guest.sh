@@ -65,10 +65,13 @@ for file in \
 done
 
 version=1.0.0
-install -d -m 0755 "/usr/src/try-omarchy-battery-$version"
-for file in try-omarchy-battery.c Makefile dkms.conf; do
-  install -m 0644 "$module_source/$file" "/usr/src/try-omarchy-battery-$version/$file"
-done
+module_dest=/usr/src/try-omarchy-battery-1.0.0
+[[ $module_dest == "/usr/src/try-omarchy-battery-$version" ]] ||
+  fail "module destination does not match version $version"
+install -d -m 0755 "$module_dest"
+install -m 0644 "$module_source/try-omarchy-battery.c" /usr/src/try-omarchy-battery-1.0.0/try-omarchy-battery.c
+install -m 0644 "$module_source/Makefile" /usr/src/try-omarchy-battery-1.0.0/Makefile
+install -m 0644 "$module_source/dkms.conf" /usr/src/try-omarchy-battery-1.0.0/dkms.conf
 install -m 0755 "$overlay/usr/local/bin/omarchy-native-battery-bridge" \
   /usr/local/bin/omarchy-native-battery-bridge
 install -m 0644 "$overlay/usr/lib/systemd/system/omarchy-native-battery-bridge.service" \
