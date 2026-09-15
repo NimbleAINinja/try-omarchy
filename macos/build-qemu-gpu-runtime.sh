@@ -48,6 +48,7 @@ identity_patch="$native_dir/patches/qemu-cocoa-product-identity.patch"
 display_patch="$native_dir/patches/qemu-cocoa-dynamic-display.patch"
 immersive_patch="$native_dir/patches/qemu-cocoa-immersive-mode.patch"
 full_grab_patch="$native_dir/patches/qemu-cocoa-full-grab-focus.patch"
+reenable_patch="$native_dir/patches/qemu-cocoa-full-grab-reenable.patch"
 pause_ownership_patch="$native_dir/patches/qemu-cocoa-pause-ownership.patch"
 pinch_patch="$native_dir/patches/qemu-cocoa-pinch-zoom.patch"
 audio_device_patch="$native_dir/patches/qemu-sdl-audio-device-selection.patch"
@@ -70,6 +71,7 @@ identity_patch_sha256=5c9358c2858a74d6a678eacaae550a021f3e616c98c4e4e98c0e50bd86
 display_patch_sha256=1ce59350b6b8e6842bc0c9ca34c97f54cb75e85e2d7b35e5b483858654c4d693
 immersive_patch_sha256=2462463932f7db0d659f754f7f9c182884564dbcd7d4b8e523f1b57f0bd9fe5b
 full_grab_patch_sha256=d94aaa7b8b8b97eb25a5ace2b3a1268985e1b16e4e6201847b926b8ee709dbfb
+reenable_patch_sha256=f6ed7e01e1554049aa3cf2964d1f4a851cb1735208f9ddc88eeb608d1b7fbaed
 pause_ownership_patch_sha256=1a5729b36eb3e437395d41883a10c3c652df71d289d5df84d95aebd49c78a8f0
 pinch_patch_sha256=37acb8895dddd35fc66812d0c49ec5fc697f9127e9e12ed2e60d17999bf32aee
 audio_device_patch_sha256=03aca71c26163c337338cc3b2013c35430690fc0e8b66c5ce92a42f59a9b3334
@@ -165,6 +167,8 @@ macos_major=$(sw_vers -productVersion | awk -F. '{ print $1 }')
   die "missing immersive-mode patch: $immersive_patch"
 [[ -f $full_grab_patch && ! -L $full_grab_patch ]] || \
   die "missing Cocoa full-grab patch: $full_grab_patch"
+[[ -f $reenable_patch && ! -L $reenable_patch ]] || \
+  die "missing Cocoa full-grab re-enable patch: $reenable_patch"
 [[ -f $pause_ownership_patch && ! -L $pause_ownership_patch ]] || \
   die "missing Cocoa pause-ownership patch: $pause_ownership_patch"
 [[ -f $pinch_patch && ! -L $pinch_patch ]] || \
@@ -363,6 +367,8 @@ verify_file_sha "Try Omarchy Cocoa immersive-mode patch" \
   "$immersive_patch" "$immersive_patch_sha256"
 verify_file_sha "Try Omarchy Cocoa full-grab patch" \
   "$full_grab_patch" "$full_grab_patch_sha256"
+verify_file_sha "Try Omarchy Cocoa full-grab re-enable patch" \
+  "$reenable_patch" "$reenable_patch_sha256"
 verify_file_sha "Try Omarchy Cocoa pause-ownership patch" \
   "$pause_ownership_patch" "$pause_ownership_patch_sha256"
 verify_file_sha "Try Omarchy Cocoa pinch-zoom patch" \
@@ -381,6 +387,7 @@ patch -d "$source_dir" -p1 -f -i "$identity_patch"
 patch -d "$source_dir" -p1 -f -i "$display_patch"
 patch -d "$source_dir" -p1 -f -i "$immersive_patch"
 patch -d "$source_dir" -p1 -f -i "$full_grab_patch"
+patch -d "$source_dir" -p1 -f -i "$reenable_patch"
 patch -d "$source_dir" -p1 -f -i "$pause_ownership_patch"
 patch -d "$source_dir" -p1 -f -i "$audio_device_patch"
 patch -d "$source_dir" -p1 -f -i "$shared_folder_patch"
