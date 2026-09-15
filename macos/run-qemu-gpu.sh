@@ -535,6 +535,7 @@ supply_chain_keys = {
     "mise",
     "omarchyPackagesCommit",
     "omarchyPackagesRepository",
+    "tryOmarchyBattery",
     "ttfx",
     "vivaldi",
     "voxtype",
