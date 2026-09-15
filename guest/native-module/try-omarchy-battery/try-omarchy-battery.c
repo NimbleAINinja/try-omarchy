@@ -279,8 +279,12 @@ static ssize_t state_store(struct device *dev, struct device_attribute *attr,
 		battery = power_supply_register(&tob_pdev->dev, &tob_bat_desc,
 						&config);
 		if (IS_ERR(battery)) {
+			error = PTR_ERR(battery);
+			mutex_lock(&tob_state_lock);
+			tob_state.present = false;
+			mutex_unlock(&tob_state_lock);
 			mutex_unlock(&tob_register_lock);
-			return PTR_ERR(battery);
+			return error;
 		}
 		tob_bat = battery;
 		bat_changed = false; /* registration already notified */
@@ -332,6 +336,9 @@ unregister_pdev:
 
 static void __exit tob_exit(void)
 {
+	/* Removing the attribute drains in-flight state_store writers, so
+	 * nothing can touch the supplies or the platform device below. */
+	device_remove_file(&tob_pdev->dev, &dev_attr_state);
 	mutex_lock(&tob_register_lock);
 	if (tob_bat) {
 		power_supply_unregister(tob_bat);
@@ -339,7 +346,6 @@ static void __exit tob_exit(void)
 	}
 	mutex_unlock(&tob_register_lock);
 	power_supply_unregister(tob_ac);
-	device_remove_file(&tob_pdev->dev, &dev_attr_state);
 	platform_device_unregister(tob_pdev);
 }
 
