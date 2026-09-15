@@ -584,6 +584,14 @@
       "protocolVersion": 1,
       "width": 1280
     },
+    "battery": {
+      "activation": "always-on",
+      "device": "virtserialport",
+      "direction": "host-to-guest",
+      "guestSupplies": ["ADP0", "BAT0"],
+      "port": "dev.tryomarchy.battery",
+      "protocolVersion": 1
+    },
     "storage": {
       "device": "virtio-blk-pci",
       "format": "raw",
