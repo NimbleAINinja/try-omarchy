@@ -41,6 +41,15 @@ import Testing
         #expect(object["type"] as? String == "state")
         #expect(object["percentage"] as? Int == 57)
         #expect(object["timeToFullSeconds"] is NSNull)
+        // Pin the wire contract's key set exactly; the guest agent parses
+        // by these keys, and neither extras nor omissions are safe to add
+        // silently.
+        #expect(
+            Set(object.keys) == [
+                "acConnected", "percentage", "present", "state",
+                "timeToEmptySeconds", "timeToFullSeconds", "type",
+            ]
+        )
     }
 
     @Test func chargingAndChargedMapToTheProtocolTokens() {
@@ -110,5 +119,54 @@ import Testing
         #expect(NativeBatteryBridge.isRefreshRequest(Data(#"{"type":"refresh"}"#.utf8)))
         #expect(!NativeBatteryBridge.isRefreshRequest(Data(#"{"type":"state"}"#.utf8)))
         #expect(!NativeBatteryBridge.isRefreshRequest(Data("garbage".utf8)))
+    }
+}
+
+@Suite struct GuestLineReaderTests {
+    @Test func decodesLinesSplitAcrossFeedCalls() {
+        var reader = GuestLineReader()
+        let first = Array(#"{"type":"ref"#.utf8)
+        let second = Array("resh\"}\n".utf8)
+        #expect(reader.feed(first[...]).isEmpty)
+        let lines = reader.feed(second[...])
+        #expect(lines.count == 1)
+        #expect(NativeBatteryBridge.isRefreshRequest(lines[0]))
+    }
+
+    @Test func decodesMultipleLinesInOneFeedCall() {
+        var reader = GuestLineReader()
+        let chunk = Array(#"{"type":"refresh"}"# + "\n" + #"{"type":"refresh"}"# + "\n")
+            .map { UInt8($0.asciiValue!) }
+        let lines = reader.feed(chunk[...])
+        #expect(lines.count == 2)
+        #expect(lines.allSatisfy(NativeBatteryBridge.isRefreshRequest))
+    }
+
+    /// Guards Finding 2: an oversized guest line must never be treated as
+    /// fatal — the wire contract requires every non-refresh guest byte to
+    /// be ignored, not to terminate the bridge. This drops the overflow
+    /// silently and keeps parsing the next line normally.
+    @Test func anOversizedLineIsDroppedAndParsingResumesAfterItsNewline() {
+        var reader = GuestLineReader()
+        let overflow = [UInt8](repeating: UInt8(ascii: "x"), count: GuestLineReader.maximumLineBytes + 1)
+        #expect(reader.feed(overflow[...]).isEmpty)
+        // The overflow line's own terminating newline, immediately followed
+        // by a well-formed refresh request: the guest keeps talking right
+        // after sending garbage, and that refresh must still be honored.
+        let rest = Array(("\n" + #"{"type":"refresh"}"# + "\n").utf8)
+        let lines = reader.feed(rest[...])
+        #expect(lines.count == 1)
+        #expect(NativeBatteryBridge.isRefreshRequest(lines[0]))
+    }
+
+    @Test func anOversizedLineSpanningMultipleFeedCallsIsStillDropped() {
+        var reader = GuestLineReader()
+        let half = [UInt8](repeating: UInt8(ascii: "x"), count: GuestLineReader.maximumLineBytes)
+        #expect(reader.feed(half[...]).isEmpty)
+        #expect(reader.feed(half[...]).isEmpty) // now well past the limit, still no newline
+        let rest = Array(("\n" + #"{"type":"refresh"}"# + "\n").utf8)
+        let lines = reader.feed(rest[...])
+        #expect(lines.count == 1)
+        #expect(NativeBatteryBridge.isRefreshRequest(lines[0]))
     }
 }
