@@ -42,10 +42,10 @@ Alternatives considered and rejected:
 | Decision | Choice |
 | --- | --- |
 | Surface | A real `power_supply` device, via a purpose-built DKMS module |
-| Critical battery | Warn only — `CriticalPowerAction=Ignore`; the VM never acts |
+| Critical battery | Warn only — UPower's critical action disabled; the VM never acts |
 | Fidelity | Percentage, charge state, AC presence, time-to-empty/time-to-full |
 | Activation | Always on, no start-menu surface, no macOS permission |
-| Direction | Host to guest only; the guest can never change Mac power state |
+| Direction | State flows host to guest; the guest may only request a refresh |
 | Supply names | `BAT0` and `ADP0`, the conventional Linux names |
 
 `BAT0`/`ADP0` maximize compatibility with tools that special-case those names
@@ -55,7 +55,9 @@ instead: manufacturer `Apple`, model `Mac Battery`.
 ## Architecture
 
 One new host-integration channel, built like the existing four. A fifth
-virtio-serial port carries newline-delimited JSON one way.
+virtio-serial port carries newline-delimited JSON. State flows host to guest
+only; the guest may send a single `refresh` request, and nothing it sends can
+influence Mac power state.
 
 ```text
 IOKit power sources  ->  NativeBatteryBridge (Swift, in the helper)
@@ -90,8 +92,11 @@ late-joining agent is never half-informed.
 - A Mac with no internal battery sends `"present":false` with
   `"acConnected":true`.
 
-The host sends a snapshot when a guest attaches to the port, on every coalesced
-change, and every 30 seconds as a safety net against a missed notification.
+The host sends a snapshot on every coalesced change and every 30 seconds as a
+safety net against a missed notification. A guest opening the virtio port is
+not observable on the host's socket chardev, so the guest agent sends one
+request line on start — `{"type":"refresh"}` — and the host answers with a
+fresh snapshot. The host ignores any other guest input.
 
 ## Host side
 
@@ -153,6 +158,12 @@ agent passes it through unchanged. When the host reports `present:false` the
 agent writes `present=0 ac=<0|1>` and omits every battery-only key; the module
 unregisters `BAT0` and ignores stale values for it.
 
+Lock-ordering constraint: `power_supply_unregister` must never be called while
+holding the state mutex that `get_property` takes, or the write path can
+deadlock against a concurrent UPower property read. The write handler updates
+the struct under the mutex, drops it, and only then registers or unregisters
+`BAT0`.
+
 ### Packaging
 
 `guest/scripts/register-native-battery-module.sh` builds a
@@ -172,9 +183,10 @@ which cuts against how this repo treats the image.
 camera and clipboard agents, but a **system** service running as root: it writes
 sysfs and must be up before anyone logs in.
 
-It reads and validates JSON lines and writes the state line. On EOF, meaning the
-host bridge is gone, it writes `status=unknown` before exiting non-zero, so a
-dead bridge reads as an honest unknown rather than a frozen percentage.
+It sends `{"type":"refresh"}` once on start, then reads and validates JSON
+lines and writes the state line. On EOF, meaning the host bridge is gone, it
+writes `status=unknown` before exiting non-zero, so a dead bridge reads as an
+honest unknown rather than a frozen percentage.
 
 `omarchy-native-battery-bridge.service` carries
 `ConditionPathExists=/dev/virtio-ports/dev.tryomarchy.battery`,
@@ -188,8 +200,11 @@ dead bridge reads as an honest unknown rather than a frozen percentage.
 - `/etc/udev/rules.d/95-omarchy-native-battery.rules` sets the port root-only
   (`MODE="0600"`, no `GROUP="users"`) — the authentication rule's posture, since
   no user process needs this port.
-- `/etc/UPower/UPower.conf.d/90-try-omarchy.conf` sets
-  `CriticalPowerAction=Ignore`.
+- `/etc/UPower/UPower.conf.d/90-try-omarchy.conf` sets both
+  `CriticalPowerAction=Ignore` **and** `AllowRiskyCriticalPowerAction=true`.
+  In the pinned `upower 1.91.4`, `Ignore` is classified as a risky action and
+  is honored only when the second key is set; without it UPower silently falls
+  back to HybridSleep, then Hibernate, then PowerOff.
 
 ## Existing guests
 
@@ -205,7 +220,9 @@ itself.
 `guest/scripts/install-battery-into-existing-guest.sh` runs **inside** the VM
 against files staged through the shared Mac folder — no network fetch, so it
 stays auditable and matches how this repo treats supply chain. It installs the
-six files, runs `dkms install try-omarchy-battery/1.0`, and enables the service.
+eight files (the three module sources plus the agent, unit, udev rule,
+modules-load drop-in, and UPower drop-in), runs
+`dkms install try-omarchy-battery/1.0`, and enables the service.
 
 This script is also how the feature is tested during development, without
 rebuilding a 6 GB image per iteration.
@@ -234,7 +251,8 @@ All are non-fatal to the VM, matching the camera bridge's posture.
 - `guest/tests/verify.py` — module packaged and locked, headers locked, unit
   enabled, udev rule root-only, modules-load and UPower drop-ins present.
 - `macos/Tests/OmarchyVMHelperTests/BatteryBridgeTests.swift` — snapshot
-  encoding, coalescing, no-battery Mac, time-field nulls.
+  encoding, coalescing, no-battery Mac, time-field nulls, refresh request
+  answered, other guest input ignored.
 - `macos/Tests/run-qemu-ssh-contract.test.sh` — the `nr=5` port assertion.
 - Manual on Apple Silicon: `upower -d` reports `BAT0`; the bar icon and
   percentage track the Mac on unplug and replug; the widget is absent on a Mac
