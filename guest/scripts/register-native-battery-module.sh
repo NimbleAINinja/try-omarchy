@@ -70,7 +70,7 @@ esac
 [[ $root != "$work" && $work != "$root/"* ]] || fail "work directory must be outside the staged root"
 [[ $root != *$'\n'* && $work != *$'\n'* ]] || fail "root and work paths cannot contain newlines"
 
-for command in bsdtar find gzip install pacman python3 sha256sum sort tar touch zstd; do
+for command in bsdtar find gzip install mount pacman python3 sha256sum sort tar touch umount zstd; do
   command -v "$command" >/dev/null || fail "$command is required"
 done
 
@@ -162,6 +162,35 @@ tar \
 archive_query=$(pacman --config "$pacman_config" -Qp "$package_archive")
 [[ $archive_query == "$package_name $package_version" ]] ||
   fail "battery module package identity mismatch: $archive_query"
+# This is the first transaction whose hooks actually run programs inside the
+# staged root: the DKMS hook compiles the module and mkinitcpio inspects the
+# system. pacstrap has already torn down its own mounts, so give the hooks the
+# API filesystems arch-chroot would have given them. Without this the hooks'
+# `>/dev/null` materializes a stray regular file in the shipped rootfs and
+# mkinitcpio aborts with "/proc must be mounted!".
+api_mounts=()
+unmount_api_filesystems() {
+  local index
+  for (( index = ${#api_mounts[@]} - 1; index >= 0; index-- )); do
+    umount --recursive "${api_mounts[index]}" ||
+      fail "could not unmount ${api_mounts[index]} from the staged root"
+  done
+  api_mounts=()
+}
+for directory in proc sys dev run; do
+  [[ -d $root/$directory && ! -L $root/$directory ]] ||
+    fail "staged root is missing its /$directory mount point"
+done
+trap 'unmount_api_filesystems' EXIT
+mount -t proc -o nosuid,noexec,nodev proc "$root/proc"
+api_mounts+=("$root/proc")
+mount -t sysfs -o nosuid,noexec,nodev,ro sys "$root/sys"
+api_mounts+=("$root/sys")
+mount -t devtmpfs -o mode=0755,nosuid udev "$root/dev"
+api_mounts+=("$root/dev")
+mount -t tmpfs -o mode=0755,nosuid,nodev run "$root/run"
+api_mounts+=("$root/run")
+
 pacman \
   --noconfirm \
   --config "$pacman_config" \
@@ -170,9 +199,14 @@ pacman \
   --logfile "$root/var/log/pacman.log" \
   -U "$package_archive"
 
+unmount_api_filesystems
+trap - EXIT
+
 query=$(pacman --config "$pacman_config" --root "$root" --dbpath "$root/var/lib/pacman" -Q "$package_name")
 [[ $query == "$package_name $package_version" ]] ||
   fail "battery module package was not installed: $query"
+pacman --config "$pacman_config" --root "$root" --dbpath "$root/var/lib/pacman" -Qkk "$package_name" >/dev/null ||
+  fail "installed battery module package failed its ownership check"
 
 # The DKMS transaction hook must have produced the module for the pinned
 # kernel. An empty glob here means the hook did not run or the compile failed.
