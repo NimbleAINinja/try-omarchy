@@ -3,9 +3,11 @@
 Try Omarchy mirrors the Mac's battery into the guest as a real
 `/sys/class/power_supply` device: `BAT0` and `ADP0`. Omarchy Quattro's bar is
 Quickshell, and Quickshell's `UPower` bindings read that sysfs tree, so the bar
-shows the Mac's battery with no configuration. The device is honest about
-where it comes from — manufacturer `Apple`, model `Mac Battery` — but named
-`BAT0`/`ADP0` because those are the names status tools special-case.
+shows the Mac's battery charge and charging state with no configuration. The
+time estimates reach sysfs but not the bar; see "Time estimates" below. The
+device is honest about where it comes from — manufacturer `Apple`, model
+`Mac Battery` — but named `BAT0`/`ADP0` because those are the names status
+tools special-case.
 
 State flows one way, host to guest. The guest may only ask for a fresh
 snapshot; nothing it sends can change Mac power state. On a Mac with no
@@ -65,6 +67,16 @@ one missing a required key for the state it declares, is rejected whole and
 the module keeps the previous state. `BAT0` is registered on the first
 `present=1` write and unregistered on the next `present=0`, so a desktop Mac
 never creates it and the bar has nothing to render.
+
+## Time estimates
+
+The module publishes the host's estimates as `time_to_empty_avg` and
+`time_to_full_avg` under `/sys/class/power_supply/BAT0/`. The pinned
+`upower 1.91.4` does not read those two properties, and the device carries no
+energy, charge or power values for UPower to derive an estimate from, so the
+time remaining does not appear in the Omarchy bar. Percentage, charge state
+and AC presence do. Tools that read sysfs directly, such as `acpi` and
+fastfetch, show the estimates.
 
 ## Critical battery policy
 
@@ -130,7 +142,7 @@ All are non-fatal to the VM, matching the camera bridge's posture:
 | --- | --- |
 | Mac has no internal battery | `present:false`; guest keeps `ADP0` only; bar shows nothing |
 | Host bridge dies | Agent writes `status=unknown`, exits; systemd restarts it; launcher restarts the bridge |
-| Module absent (un-retrofitted guest) | Agent logs and exits; nothing else notices |
+| Module absent (un-retrofitted guest) | The unit's `ConditionPathExists` on the sysfs attribute fails; the agent never starts, and a later retrofit brings it up |
 | Malformed JSON line or state line | Rejected; previous state retained |
 | Host sleep and wake | Fresh snapshot on the next notification or the 30-second tick |
 | Critically low Mac battery | Omarchy warns; the VM does not suspend or power off |

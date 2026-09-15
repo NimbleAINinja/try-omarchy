@@ -48,6 +48,12 @@ Alternatives considered and rejected:
 | Direction | State flows host to guest; the guest may only request a refresh |
 | Supply names | `BAT0` and `ADP0`, the conventional Linux names |
 
+The time estimates reach sysfs as `time_to_empty_avg` and `time_to_full_avg`,
+but the pinned `upower 1.91.4` does not read those properties and the
+capacity-only device gives it no energy or power values to derive an estimate
+from, so the bar shows percentage, charge state and AC presence only. Tools
+that read sysfs directly (`acpi`, fastfetch) do see the time estimates.
+
 `BAT0`/`ADP0` maximize compatibility with tools that special-case those names
 (fastfetch, `acpi`, status scripts). The device is honest in its properties
 instead: manufacturer `Apple`, model `Mac Battery`.
@@ -239,7 +245,7 @@ All are non-fatal to the VM, matching the camera bridge's posture.
 | --- | --- |
 | Mac has no internal battery | `present:false`; guest keeps `ADP0` only; bar shows nothing |
 | Host bridge dies | Agent writes `status=unknown`, exits; systemd restarts it; launcher restarts the bridge |
-| Module absent (un-retrofitted guest) | Agent logs and exits; nothing else notices |
+| Module absent (un-retrofitted guest) | The unit's `ConditionPathExists` on the sysfs attribute fails; the agent never starts, and a later retrofit brings it up |
 | Malformed JSON line or state line | Rejected; previous state retained |
 | Host sleep and wake | Fresh snapshot on the next notification or the 30-second tick |
 | Critically low Mac battery | Omarchy warns; the VM does not suspend or power off |
