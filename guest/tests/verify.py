@@ -1303,6 +1303,60 @@ def main() -> None:
         and 'MODE="0600"' in authentication_rule,
         "Touch ID authorization port is root-only",
     )
+    battery_bridge = GUEST / "native-overlay/usr/local/bin/omarchy-native-battery-bridge"
+    check(battery_bridge.stat().st_mode & stat.S_IXUSR != 0, "native battery bridge is executable")
+    with tempfile.TemporaryDirectory() as temporary:
+        py_compile.compile(str(battery_bridge), cfile=str(Path(temporary) / "battery.pyc"), doraise=True)
+    check(True, "native battery bridge compiles")
+    battery_unit = read(
+        GUEST / "native-overlay/usr/lib/systemd/system/omarchy-native-battery-bridge.service"
+    )
+    check(
+        "ConditionPathExists=/dev/virtio-ports/dev.tryomarchy.battery" in battery_unit
+        and "Restart=always" in battery_unit
+        and "StartLimitIntervalSec=0" in battery_unit,
+        "battery agent follows the virtio port and keeps retrying",
+    )
+    battery_rule = read(GUEST / "native-overlay/etc/udev/rules.d/95-omarchy-native-battery.rules")
+    check(
+        'ATTR{name}=="dev.tryomarchy.battery"' in battery_rule
+        and 'MODE="0600"' in battery_rule
+        and "GROUP=" not in battery_rule,
+        "battery port is root-only",
+    )
+    check(
+        read(GUEST / "native-overlay/etc/modules-load.d/95-try-omarchy-battery.conf").strip()
+        == "try_omarchy_battery",
+        "battery module loads at boot",
+    )
+    upower_dropin = read(GUEST / "native-overlay/etc/UPower/UPower.conf.d/90-try-omarchy.conf")
+    check(
+        "CriticalPowerAction=Ignore" in upower_dropin
+        and "AllowRiskyCriticalPowerAction=true" in upower_dropin,
+        "critical Mac battery warns without suspending the guest",
+    )
+    module_source = read(GUEST / "native-module/try-omarchy-battery/try-omarchy-battery.c")
+    check(
+        '.name = "BAT0"' in module_source
+        and '.name = "ADP0"' in module_source
+        and "DEVICE_ATTR_ADMIN_RW(state)" in module_source
+        and "power_supply_unregister" in module_source,
+        "battery module exposes BAT0/ADP0 behind a root-only state attribute",
+    )
+    check(
+        'PACKAGE_VERSION="1.0.0"' in read(GUEST / "native-module/try-omarchy-battery/dkms.conf"),
+        "battery module DKMS version matches the spec pin",
+    )
+    finalize = read(GUEST / "scripts/finalize-rootfs.sh")
+    check(
+        "systemctl enable omarchy-native-battery-bridge.service" in finalize,
+        "battery agent is enabled in the factory image",
+    )
+    configure = read(GUEST / "scripts/configure-rootfs.sh")
+    check(
+        "omarchy-native-battery-bridge" in configure,
+        "battery agent is made executable during rootfs configuration",
+    )
     mac_share = GUEST / "native-overlay/usr/local/bin/omarchy-native-mac-share"
     check(mac_share.stat().st_mode & stat.S_IXUSR != 0, "native Mac share mounter is executable")
     with tempfile.TemporaryDirectory() as temporary:

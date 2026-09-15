@@ -115,6 +115,7 @@ printf '%s  %s\n' "$expected_vivaldi_key_sha256" "$vivaldi_key" | sha256sum -c -
 systemctl enable omarchy-provision-owner.service
 systemctl enable sddm.service
 systemctl enable omarchy-native-mac-share.service
+systemctl enable omarchy-native-battery-bridge.service
 
 # The app expands only the writable APFS clone to 24 GiB. Grow ext4 online so
 # Omarchy's update-safety check sees that working capacity.
