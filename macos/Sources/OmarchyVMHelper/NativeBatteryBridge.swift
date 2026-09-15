@@ -91,6 +91,43 @@ struct BatterySendPolicy {
     }
 }
 
+/// Splits a raw guest byte stream into complete newline-delimited lines.
+/// A line that exceeds the wire limit is dropped rather than surfaced —
+/// every guest byte other than a well-formed refresh is ignored per the
+/// wire contract, and an oversized line is guest input like any other; it
+/// must not be able to terminate the bridge. Parsing resumes cleanly at the
+/// next newline once the oversized line ends.
+struct GuestLineReader {
+    static let maximumLineBytes = 4096
+
+    private var buffer = Data()
+    private var isSkippingOverflow = false
+
+    /// Returns each complete line found in `chunk`, in order. A line that
+    /// overflowed while buffering is silently omitted.
+    mutating func feed(_ chunk: ArraySlice<UInt8>) -> [Data] {
+        var lines: [Data] = []
+        var start = chunk.startIndex
+        for index in chunk.indices where chunk[index] == 0x0A {
+            if !isSkippingOverflow {
+                buffer.append(contentsOf: chunk[start..<index])
+                lines.append(buffer)
+            }
+            buffer.removeAll(keepingCapacity: true)
+            isSkippingOverflow = false
+            start = index + 1
+        }
+        if !isSkippingOverflow {
+            buffer.append(contentsOf: chunk[start..<chunk.endIndex])
+            if buffer.count > Self.maximumLineBytes {
+                buffer.removeAll(keepingCapacity: true)
+                isSkippingOverflow = true
+            }
+        }
+        return lines
+    }
+}
+
 final class NativeBatteryBridge: @unchecked Sendable {
     static let heartbeatSeconds = 30.0
 
@@ -126,25 +163,21 @@ final class NativeBatteryBridge: @unchecked Sendable {
         startPowerNotifications()
         startHeartbeat()
         send(forced: true)
-        var line = Data()
+        var reader = GuestLineReader()
         var chunk = [UInt8](repeating: 0, count: 4096)
         while true {
             let count = chunk.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
             if count > 0 {
-                var start = 0
-                for index in 0..<count where chunk[index] == 0x0A {
-                    line.append(contentsOf: chunk[start..<index])
+                for line in reader.feed(chunk[0..<count]) {
                     // The refresh request is the only guest input; anything
                     // else is ignored so the guest cannot drive this bridge.
+                    // Dispatched synchronously so a guest that floods refresh
+                    // requests without draining its side is coupled to the
+                    // blocking socket write, instead of queuing unbounded
+                    // work onto stateQueue.
                     if Self.isRefreshRequest(line) {
-                        send(forced: true)
+                        sendSync(forced: true)
                     }
-                    line.removeAll(keepingCapacity: true)
-                    start = index + 1
-                }
-                line.append(contentsOf: chunk[start..<count])
-                guard line.count <= 4096 else {
-                    throw HelperError.io("guest battery request exceeds 4 KiB")
                 }
             } else if count == 0 {
                 return
@@ -229,24 +262,47 @@ final class NativeBatteryBridge: @unchecked Sendable {
             leeway: .seconds(1)
         )
         timer.setEventHandler { [weak self] in
-            self?.send(forced: true)
+            // Already running on stateQueue; call the body directly rather
+            // than through `send`/`sendSync` so this can never dispatch
+            // onto the queue it is already executing on.
+            self?.sendOnQueue(forced: true)
         }
         timer.resume()
         heartbeat = timer
     }
 
+    /// Queues a snapshot send without blocking the caller. Used by the
+    /// notification callback and the initial send in `run()`, neither of
+    /// which need — or should wait on — completion.
     private func send(forced: Bool) {
         stateQueue.async { [weak self] in
-            guard let self, !self.hasStopped() else { return }
-            let snapshot = HostBatterySnapshot.capture()
-            guard self.policy.shouldSend(snapshot, forced: forced) else { return }
-            do {
-                try NativeBridgeSocket.writeAll(snapshot.encode(), to: self.descriptor, label: "battery")
-                self.policy.markSent(snapshot)
-            } catch {
-                fputs("[battery-bridge] \(error.localizedDescription)\n", stderr)
-                self.stop()
-            }
+            self?.sendOnQueue(forced: forced)
+        }
+    }
+
+    /// Queues a snapshot send and blocks the caller until it completes.
+    /// The guest's refresh request uses this so a guest that floods refresh
+    /// lines without draining its side is throttled by the blocking socket
+    /// write instead of piling up unbounded closures on `stateQueue`. Must
+    /// never be called from `stateQueue` itself (the heartbeat timer calls
+    /// `sendOnQueue` directly for exactly that reason) or this deadlocks.
+    private func sendSync(forced: Bool) {
+        stateQueue.sync {
+            sendOnQueue(forced: forced)
+        }
+    }
+
+    /// The actual send. Must only run on `stateQueue`.
+    private func sendOnQueue(forced: Bool) {
+        guard !hasStopped() else { return }
+        let snapshot = HostBatterySnapshot.capture()
+        guard policy.shouldSend(snapshot, forced: forced) else { return }
+        do {
+            try NativeBridgeSocket.writeAll(snapshot.encode(), to: descriptor, label: "battery")
+            policy.markSent(snapshot)
+        } catch {
+            fputs("[battery-bridge] \(error.localizedDescription)\n", stderr)
+            stop()
         }
     }
 }
