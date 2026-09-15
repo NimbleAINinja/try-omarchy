@@ -83,6 +83,7 @@ chmod 0755 \
   "$root/usr/local/bin/omarchy-pkg-unavailable-arm" \
   "$root/usr/local/bin/omarchy-pkg-refuse-aarch64-unavailable" \
   "$root/usr/local/bin/omarchy-native-audio-bridge" \
+  "$root/usr/local/bin/omarchy-native-battery-bridge" \
   "$root/usr/local/bin/omarchy-native-camera-bridge" \
   "$root/usr/local/bin/omarchy-native-clipboard-bridge" \
   "$root/usr/local/bin/omarchy-native-cursor-restore" \
