@@ -69,6 +69,7 @@ test:
 	@$(ROOT)/macos/Tests/run-qemu-ssh-contract.test.sh
 	@$(ROOT)/macos/Tests/qemu-memory-contract.test.sh
 	@$(ROOT)/macos/Tests/qemu-power-actions.test.sh
+	@$(ROOT)/macos/Tests/qemu-monitor-ready.test.sh
 	@$(ROOT)/macos/Tests/qemu-persistent-storage.test.sh
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/resize-vm-disk.test.py"
 

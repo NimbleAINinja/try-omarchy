@@ -52,6 +52,7 @@ qemu_bin="$resources_dir/runtime/bin/Try Omarchy"
 native_bridge="$contents_dir/MacOS/omarchy-vm-helper"
 storage_library="$script_dir/qemu-persistent-storage.sh"
 port_forwarding_library="$script_dir/qemu-port-forwarding.sh"
+monitor_ready_library="$script_dir/qemu-monitor-ready.sh"
 
 [[ $(uname -m) == arm64 ]] || fail "requires an ARM64 Mac"
 [[ $(uname -s) == Darwin ]] || fail "requires macOS"
@@ -931,6 +932,9 @@ fi
 [[ -f $port_forwarding_library && ! -L $port_forwarding_library ]] || {
   fail "port-forwarding library is missing or unsafe: $port_forwarding_library"
 }
+[[ -f $monitor_ready_library && ! -L $monitor_ready_library ]] || {
+  fail "monitor-readiness library is missing or unsafe: $monitor_ready_library"
+}
 
 # These libraries are sealed resources in normal app launches. The complete
 # app bundle was verified above before either file can execute. Inspect-only is
@@ -939,6 +943,8 @@ fi
 source "$storage_library"
 # shellcheck source=qemu-port-forwarding.sh
 source "$port_forwarding_library"
+# shellcheck source=qemu-monitor-ready.sh
+source "$monitor_ready_library"
 source "$script_dir/qemu-networking.sh"
 qemu_network_validate
 if [[ $QEMU_NETWORK_MODE == bridged ]]; then
@@ -1644,6 +1650,10 @@ done
 [[ -S $authentication_bridge_socket ]] || fail "QEMU did not create its private authentication bridge socket"
 [[ -S $camera_bridge_socket ]] || fail "QEMU did not create its private camera bridge socket"
 [[ -S $clipboard_bridge_socket ]] || fail "QEMU did not create its private clipboard bridge socket"
+# The socket file appears before QEMU's main loop accepts connections, and the
+# helper tears the VM down if the monitor behind this line does not answer.
+qemu_wait_for_qmp_monitor "$qmp_socket" "$qemu_pid" || \
+  fail "QEMU's QMP monitor did not become ready"
 echo "[qemu-gpu] Ready. QMP: $qmp_socket" >&2
 
 # FD 9 deliberately remains open only in QEMU. Letting the sibling audio

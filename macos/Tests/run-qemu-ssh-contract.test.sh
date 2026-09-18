@@ -49,8 +49,10 @@ mkdir -p \
 /bin/cp "$macos_dir/run-qemu-gpu.sh" "$resources/scripts/run-qemu-gpu.sh"
 /bin/cp "$macos_dir/qemu-port-forwarding.sh" "$resources/scripts/qemu-port-forwarding.sh"
 /bin/cp "$macos_dir/qemu-networking.sh" "$resources/scripts/qemu-networking.sh"
+/bin/cp "$macos_dir/qemu-monitor-ready.sh" "$resources/scripts/qemu-monitor-ready.sh"
 chmod 755 "$resources/scripts/run-qemu-gpu.sh"
 chmod 644 "$resources/scripts/qemu-port-forwarding.sh"
+chmod 644 "$resources/scripts/qemu-monitor-ready.sh"
 
 cat >"$contents/MacOS/omarchy-vm-helper" <<'SH'
 #!/bin/bash
@@ -114,6 +116,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import threading
 import time
 
 arguments = sys.argv[1:]
@@ -137,6 +140,11 @@ if is_recovery:
         'console=tty0 console=hvc0 loglevel=3"}}\n'
     )
     export_path.joinpath("complete").write_text("try-omarchy-boot-export-v1\n")
+qmp_paths = {
+    arguments[index + 1][5:].split(",", 1)[0]
+    for index, argument in enumerate(arguments[:-1])
+    if argument == "-qmp" and arguments[index + 1].startswith("unix:")
+}
 socket_paths = []
 for argument in arguments:
     if argument.startswith("unix:"):
@@ -157,6 +165,21 @@ if os.environ.get("FAKE_QEMU_SKIP_SOCKETS") != "1":
         server.bind(path)
         server.listen(1)
         servers.append(server)
+        # Like QEMU, answer the QMP monitor with a greeting; the launcher
+        # waits for that before declaring the VM ready.
+        if path in qmp_paths:
+            def greet(server=server):
+                while True:
+                    try:
+                        client, _ = server.accept()
+                    except OSError:
+                        return
+                    try:
+                        client.sendall(b'{"QMP": {"version": {}, "capabilities": []}}\r\n')
+                    except OSError:
+                        pass
+                    client.close()
+            threading.Thread(target=greet, daemon=True).start()
 
 time.sleep(float(os.environ.get("FAKE_QEMU_LIFETIME", "0.20")))
 for server in servers:
