@@ -104,21 +104,33 @@ final class QMPVMHostSleepController: VMHostSleepControlling {
         try self.init(connectionFactory: factory)
     }
 
-    init(connectionFactory: @escaping ConnectionFactory, validateImmediately: Bool = true) throws {
+    /// Waits between startup validation attempts. Injected so tests assert the
+    /// schedule without spending it.
+    static let startupRetryDelays: [TimeInterval] = [0.05, 0.1, 0.2, 0.4]
+
+    init(
+        connectionFactory: @escaping ConnectionFactory,
+        validateImmediately: Bool = true,
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+    ) throws {
         makeConnection = connectionFactory
         if validateImmediately {
-            // The launcher sees the socket before QEMU finishes initializing
-            // its monitor. A cold start can time out during the greeting or
-            // capability negotiation even though the VM is healthy. Retry
-            // with a fresh session; a failed QMP handshake closes its socket.
-            // Keep this bounded so a broken monitor still fails startup.
-            for attempt in 0..<3 {
+            // The launcher reports the VM ready once the socket file exists,
+            // which is before QEMU's monitor accepts connections and finishes
+            // its greeting: a cold start can refuse the connection outright or
+            // time out during capability negotiation while the VM is healthy.
+            // Failing here tears that VM down, so back off between attempts
+            // rather than spending them all inside the same instant. Keep it
+            // bounded so a genuinely broken monitor still fails startup, and
+            // preserve the last error either way.
+            for attempt in 0...Self.startupRetryDelays.count {
                 do {
                     let probe = try connectionFactory()
                     probe.close()
                     break
                 } catch {
-                    if attempt == 2 { throw error }
+                    guard attempt < Self.startupRetryDelays.count else { throw error }
+                    sleep(Self.startupRetryDelays[attempt])
                 }
             }
         }

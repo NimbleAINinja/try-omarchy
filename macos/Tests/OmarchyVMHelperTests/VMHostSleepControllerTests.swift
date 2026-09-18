@@ -233,13 +233,51 @@ struct QMPVMHostSleepControllerTests {
     @Test("startup stops retrying an unavailable monitor and preserves the error")
     func startupRetryLimit() {
         let invocations = LockedInvocationCounter()
+        let delays = LockedDelayRecorder()
         #expect(throws: HelperError.io("QMP capability negotiation failed")) {
-            _ = try QMPVMHostSleepController(connectionFactory: {
-                _ = invocations.next()
-                throw HelperError.io("QMP capability negotiation failed")
-            })
+            _ = try QMPVMHostSleepController(
+                connectionFactory: {
+                    _ = invocations.next()
+                    throw HelperError.io("QMP capability negotiation failed")
+                },
+                sleep: delays.record
+            )
         }
-        #expect(invocations.next() == 4)
+        #expect(invocations.next() == 6)
+
+        // Every attempt but the first waits, and the wait grows, so a monitor
+        // that is merely slow to accept is not mistaken for a broken one.
+        #expect(delays.recorded == [0.05, 0.1, 0.2, 0.4])
+    }
+
+    @Test("startup waits out a monitor that refuses before QEMU accepts")
+    func startupToleratesRefusedConnections() throws {
+        // QEMU creates the QMP socket before its monitor accepts connections,
+        // so the launcher can report the VM ready while connect(2) still gets
+        // ECONNREFUSED. Failing there would tear down a healthy VM.
+        let invocations = LockedInvocationCounter()
+        let delays = LockedDelayRecorder()
+        let transcript = LockedQMPTranscript()
+        let accepted = try Self.startServer(steps: [], transcript: transcript)
+
+        let controller = try QMPVMHostSleepController(
+            connectionFactory: {
+                if invocations.next() < 3 {
+                    throw HelperError.io("cannot connect to QMP socket: Connection refused")
+                }
+                return try QMPConnection(
+                    connectedDescriptor: accepted.clientDescriptor,
+                    identifierPrefix: "test-startup",
+                    timeoutMilliseconds: 50
+                )
+            },
+            sleep: delays.record
+        )
+        controller.close()
+
+        #expect(accepted.finished.wait(timeout: .now() + 2) == .success)
+        #expect(transcript.errorDescription == nil)
+        #expect(delays.recorded == [0.05, 0.1])
     }
 
     @Test("bundled Cocoa controls cannot bypass QMP pause ownership")
@@ -666,6 +704,21 @@ private final class LockedDescriptorQueue: @unchecked Sendable {
             guard !descriptors.isEmpty else { return nil }
             return descriptors.removeFirst()
         }
+    }
+}
+
+private final class LockedDelayRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [TimeInterval] = []
+
+    /// Stands in for the real wait so the retry schedule is asserted directly
+    /// and the tests stay instant.
+    func record(_ delay: TimeInterval) {
+        lock.withLock { values.append(delay) }
+    }
+
+    var recorded: [TimeInterval] {
+        lock.withLock { values }
     }
 }
 
