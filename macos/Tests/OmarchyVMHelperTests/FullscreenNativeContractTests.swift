@@ -96,6 +96,52 @@ struct FullscreenNativeContractTests {
         #expect(fullGrab.lowerBound < reenable.lowerBound)
     }
 
+    @Test("Cocoa leaves the Mac's brightness keys with macOS")
+    func hostBrightnessKeysPassThrough() throws {
+        let patch = try source(named: "patches/qemu-cocoa-host-brightness-keys.patch")
+
+        // The display brightness keys. Apple keyboards in their default mode
+        // send these as plain key events with dedicated keycodes rather than
+        // as F1/F2, so passing them through leaves real F-keys unaffected.
+        #expect(patch.contains("case 144: /* brightness up */"))
+        #expect(patch.contains("case 145: /* brightness down */"))
+        #expect(patch.contains("static bool cocoa_is_host_brightness_key(CGKeyCode keycode)"))
+
+        // The tap must hand the event back untouched before it is converted
+        // and offered to the view; otherwise the capture swallows it.
+        let tapGuard = try #require(patch.range(of:
+            "cocoa_is_host_brightness_key(CGEventGetIntegerValueField(cgEvent,"
+        ))
+        let eventConversion = try #require(
+            patch.range(of: "NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];")
+        )
+        #expect(tapGuard.lowerBound < eventConversion.lowerBound)
+
+        // And the window path must decline them too, so nothing leaks to the
+        // guest when macOS also delivers the key to our key window.
+        #expect(patch.contains("if (cocoa_is_host_brightness_key([event keyCode])) {\n+                return false;"))
+    }
+
+    @Test("Runtime build applies the brightness-key pass-through after the tap recovery")
+    func hostBrightnessKeysAreBuilt() throws {
+        let builder = try source(named: "build-qemu-gpu-runtime.sh")
+
+        #expect(builder.contains(
+            "host_brightness_keys_patch=\"$native_dir/patches/qemu-cocoa-host-brightness-keys.patch\""
+        ))
+        #expect(builder.contains("verify_file_sha \"Try Omarchy Cocoa host brightness-key patch\""))
+
+        // It edits handleTapEvent as left by the re-enable patch, so it has to
+        // apply after it.
+        let reenable = try #require(
+            builder.range(of: "patch -d \"$source_dir\" -p1 -f -i \"$reenable_patch\"")
+        )
+        let brightnessKeys = try #require(
+            builder.range(of: "patch -d \"$source_dir\" -p1 -f -i \"$host_brightness_keys_patch\"")
+        )
+        #expect(reenable.lowerBound < brightnessKeys.lowerBound)
+    }
+
     private func source(named relativePath: String) throws -> String {
         let testFile = URL(fileURLWithPath: #filePath)
         let macosDirectory = testFile

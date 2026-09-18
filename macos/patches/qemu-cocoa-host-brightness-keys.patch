@@ -1,0 +1,113 @@
+From: Try Omarchy contributors
+Subject: [PATCH] cocoa: leave the Mac's brightness keys with macOS
+
+Applies after the Try Omarchy full-grab-reenable patch.
+
+Full grab installs an HID-level CGEventTap so that system shortcuts reach
+the focused guest before macOS acts on them. handleEventLocked reports
+every key event as consumed once the keyboard is captured, mapped or not,
+so the tap swallows everything it is offered.
+
+That includes the display brightness keys. In its default mode an Apple
+keyboard sends them as ordinary key events with dedicated keycodes (144
+and 145) rather than as F1/F2. Neither has a guest mapping, so while the
+Omarchy window is focused the guest receives nothing useful and macOS
+receives nothing at all: the screen cannot be dimmed or brightened without
+first clicking away from the VM.
+
+Recognise those keycodes and hand the events straight back to macOS from
+the tap, before the conversion that would offer them to the view, and have
+the window path decline them as well so nothing leaks to the guest when
+macOS also delivers the key to our key window.
+
+Testing by keycode keeps the change narrow. With "Use F1, F2, etc. as
+standard function keys" enabled the same caps arrive as F1/F2, which are
+not in the set and continue to reach the guest as function keys. Volume
+and media-transport keys are a different event type the tap never
+captured, so they are unaffected.
+
+--- a/ui/cocoa.m
++++ b/ui/cocoa.m
+@@ -358,10 +358,28 @@
+ - (void) raiseAllKeys;
+ @end
+ 
+ QemuCocoaView *cocoaView;
+ 
++/*
++ * The Mac's display brightness keys. In its default mode an Apple keyboard
++ * sends these as plain key events with dedicated keycodes, not as F1/F2,
++ * so a keycode test leaves real function keys alone: with "Use F1, F2,
++ * etc. as standard function keys" enabled the same caps arrive as F1/F2
++ * and still reach the guest.
++ */
++static bool cocoa_is_host_brightness_key(CGKeyCode keycode)
++{
++    switch (keycode) {
++    case 144: /* brightness up */
++    case 145: /* brightness down */
++        return true;
++    default:
++        return false;
++    }
++}
++
+ static CGEventRef handleTapEvent(CGEventTapProxy proxy, CGEventType type, CGEventRef cgEvent, void *userInfo)
+ {
+     QemuCocoaView *view = userInfo;
+ 
+     /*
+@@ -376,10 +394,21 @@
+         type == kCGEventTapDisabledByUserInput) {
+         [view reenableEventTap];
+         return cgEvent;
+     }
+ 
++    /*
++     * The tap sees the Mac's display brightness keys before macOS does,
++     * and the capture below would swallow them for the whole session. The
++     * guest has no use for them; hand them straight back to macOS.
++     */
++    if ((type == kCGEventKeyDown || type == kCGEventKeyUp) &&
++        cocoa_is_host_brightness_key(CGEventGetIntegerValueField(cgEvent,
++                                    kCGKeyboardEventKeycode))) {
++        return cgEvent;
++    }
++
+     NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
+     if ([view isKeyboardCaptured] && [view handleEvent:event]) {
+         COCOA_DEBUG("Global events tap: qemu handled the event, capturing!\n");
+         return NULL;
+     }
+@@ -1075,10 +1104,16 @@
+             }
+             return true;
+         case NSEventTypeKeyDown:
+             keycode = cocoa_keycode_to_linux([event keyCode]);
+ 
++            // The Mac's brightness keys stay with macOS even when they
++            // reach our key window rather than the tap.
++            if (cocoa_is_host_brightness_key([event keyCode])) {
++                return false;
++            }
++
+             // Keep Command chords with the host unless the focused guest
+             // captured the keyboard.
+             if (![self isKeyboardCaptured] &&
+                 ([event modifierFlags] & NSEventModifierFlagCommand)) {
+                 return false;
+@@ -1113,10 +1148,14 @@
+             }
+             return true;
+         case NSEventTypeKeyUp:
+             keycode = cocoa_keycode_to_linux([event keyCode]);
+ 
++            if (cocoa_is_host_brightness_key([event keyCode])) {
++                return false;
++            }
++
+             // don't pass the guest a spurious key-up if we treated this
+             // command-key combo as a host UI action
+             if (![self isKeyboardCaptured] &&
+                 ([event modifierFlags] & NSEventModifierFlagCommand)) {
+                 return true;
