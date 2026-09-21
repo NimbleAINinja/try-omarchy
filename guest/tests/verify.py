@@ -131,11 +131,11 @@ def main() -> None:
     )
     check(spec["runtime"]["storage"]["expandedSizeMiB"] == 24576, "working disk expands to 24 GiB")
     check(
-        set(spec["inputs"]) == {"packages", "packageLock", "pacmanConfig", "abiPackagePins"},
+        set(spec["inputs"]) == {"packages", "packageLock", "pacmanConfig", "abiPackagePins", "packageRepositorySnapshot"},
         "spec has a minimal input set",
     )
     for key, value in spec["inputs"].items():
-        if key == "abiPackagePins":
+        if key in {"abiPackagePins", "packageRepositorySnapshot"}:
             continue
         check((GUEST / value).is_file(), f"spec input exists: {value}")
     abi_pins = spec["inputs"]["abiPackagePins"]
@@ -241,12 +241,14 @@ def main() -> None:
             "notification-hover-close",
             "notification-screen-privacy",
             "update-free-space-message",
+            "update-restart-arm-kernel",
             "pkg-add-aarch64-unavailable",
             "pkg-aur-add-aarch64-unavailable",
             "dropbox-aarch64-unavailable",
             "geforce-now-aarch64-unavailable",
             "battlenet-aarch64-unavailable",
             "lutris-aarch64-unavailable",
+            "keyboard-us-acentos",
         ],
         "Omarchy backports are explicitly ordered and identified",
     )
@@ -290,6 +292,12 @@ def main() -> None:
     check(
         "exec omarchy-pkg-unavailable-arm Lutris" in lutris_unavailable_patch,
         "Lutris aarch64 backport fails via the shared unavailable helper",
+    )
+    keyboard_patch = read(GUEST / "patches/omarchy/keyboard-us-acentos.patch")
+    check(
+        "+English (US, International with dead keys)|us-acentos" in keyboard_patch
+        and "+Portuguese (Brazil, ABNT2)|br-abnt2" in keyboard_patch,
+        "keyboard backport distinguishes US International from Brazilian ABNT2",
     )
     dropbox_unavailable_patch = read(GUEST / "patches/omarchy/dropbox-aarch64-unavailable.patch")
     check(
@@ -444,6 +452,10 @@ def main() -> None:
     check(
         "rpm-tools" in requested_packages and "rpm-tools" in packages,
         "factory transaction includes the RPM signature verifier for Vivaldi",
+    )
+    check(
+        "man-db" in requested_packages and "man-db" in packages,
+        "browser help probes have the man command available in the factory",
     )
     yay = spec.get("supplyChain", {}).get("yay", {})
     check(
@@ -727,6 +739,16 @@ def main() -> None:
         and 'toggles/flags.lua' in materialize,
         "skel hypr toggles seed only flags.lua, not the catalog",
     )
+    apple_keyboard = read(
+        GUEST / "native-overlay/usr/share/try-omarchy/apple-keyboard-input.lua"
+    )
+    check(
+        'kb_model = "applealu_" .. geometry' in apple_keyboard
+        and "kb_layout" not in apple_keyboard
+        and "kb_variant" not in apple_keyboard
+        and 'dofile("/usr/share/try-omarchy/apple-keyboard-input.lua")' in materialize,
+        "skel input loads Apple keyboard geometry without overriding layout",
+    )
 
     configure = read(GUEST / "scripts/configure-rootfs.sh")
     check(
@@ -741,6 +763,14 @@ def main() -> None:
         "compat/ttfx-arm64" not in configure and not (GUEST / "compat/ttfx-arm64").exists(),
         "obsolete no-op ttfx compatibility command is absent",
     )
+    check(
+        "en_US.UTF-8 UTF-8" in configure and "zh_TW.UTF-8 UTF-8" in configure,
+        "Traditional Chinese locale is generated alongside English so it can be opted into",
+    )
+    check(
+        "LANG=en_US.UTF-8" in configure and "KEYMAP=us" in configure,
+        "default session language and keyboard layout stay English/US for a user who never opts into zh-TW",
+    )
     check("omarchy-provision-owner.service" in configure, "first boot uses upstream owner provisioning")
     native_autologin = read(
         GUEST
@@ -750,6 +780,34 @@ def main() -> None:
         "ExecStartPost=" in native_autologin
         and "omarchy-provision-autologin-once.service" in native_autologin,
         "native provisioning keeps direct graphical login across VM boots",
+    )
+    check(
+        'install -d -m 0755 "$root/etc/skel/.config/fcitx5"' in configure
+        and "fragments/fcitx5-profile.ini" in configure
+        and '"$root/etc/skel/.config/fcitx5/profile"' in configure,
+        "every new user's skeleton home gets the fcitx5 input profile seeded, not just the package",
+    )
+    fcitx5_profile = read(GUEST / "fragments/fcitx5-profile.ini")
+    check(
+        "[Groups/0/Items/0]\nName=keyboard-us" in fcitx5_profile
+        and "[Groups/0/Items/1]\nName=chewing" in fcitx5_profile,
+        "keyboard-us sits at item index 0 ahead of chewing, so a user who never triggers the IME "
+        "(an inactive input context) still lands on plain US input, even though fcitx5 resolves "
+        "and rewrites the group's actual default input method to chewing",
+    )
+    check(
+        'chromium_flags="$root/etc/skel/.config/chromium-flags.conf"' in configure
+        and "[[ -f $chromium_flags ]] || fail" in configure
+        and 'cat "$guest_dir/fragments/chromium-flags-wayland-ime.append.conf" >>"$chromium_flags"'
+        in configure,
+        "the wayland-ime flag is appended to Chromium's existing flags, never overwriting Basecamp's upstream ones",
+    )
+    chromium_ime_flag = read(
+        GUEST / "fragments/chromium-flags-wayland-ime.append.conf"
+    )
+    check(
+        "--enable-wayland-ime" in chromium_ime_flag,
+        "Chromium launches with the flag fcitx5 needs to reach Wayland text fields",
     )
     fcitx_guard = read(
         GUEST / "native-overlay/etc/systemd/user/omarchy-fcitx5.service.d/10-guard.conf"
@@ -893,6 +951,43 @@ def main() -> None:
         "[zram0]" in zram_override
         and "compression-algorithm = lzo-rle" in zram_override,
         "factory zram uses the ARM kernel's supported lzo-rle backend",
+    )
+    cjk_fontconfig = read(
+        GUEST / "factory-overlay/etc/fonts/conf.d/30-try-omarchy.conf"
+    )
+    check(
+        all(f"<string>{lang}</string>" in cjk_fontconfig for lang in ("zh-tw", "zh-hant"))
+        and all(
+            f"<string>Noto {kind} CJK TC</string>" in cjk_fontconfig
+            for kind in ("Sans", "Serif", "Sans Mono")
+        ),
+        "zh-TW and zh-Hant text prefers Traditional Chinese Han glyphs over Simplified or Japanese variants for sans, serif, and monospace",
+    )
+    check(
+        'mode="prepend" binding="strong"' in cjk_fontconfig
+        and all(
+            f"<string>{family}</string>" in cjk_fontconfig
+            for family in ("sans-serif", "serif", "monospace")
+        ),
+        "the Traditional Chinese font preference is scoped to generic sans/serif/monospace requests and wins over later fontconfig stages",
+    )
+    environment_conf = read(
+        GUEST / "factory-overlay/usr/lib/environment.d/90-try-omarchy.conf"
+    )
+    environment_assignments = [
+        line.split("#", 1)[0].strip() for line in environment_conf.splitlines()
+    ]
+    environment_assignments = [line for line in environment_assignments if line]
+    check(
+        "XMODIFIERS=@im=fcitx" in environment_assignments,
+        "XWayland apps can still reach fcitx5, since they only speak the legacy XIM protocol",
+    )
+    check(
+        not any(
+            re.match(r"(GTK_IM_MODULE|QT_IM_MODULE)\s*=", line)
+            for line in environment_assignments
+        ),
+        "GTK4/Qt6 apps stay on native Wayland text-input-v3 for fcitx5 instead of being forced onto the legacy im-module path globally",
     )
     check(
         '"$root/usr/bin/omarchy-audio-input-set-default"' in configure
@@ -1193,6 +1288,110 @@ def main() -> None:
         "SSH generator requests only the boot-scoped vendor sshd unit",
     )
 
+    old_locale_generator_path = (
+        GUEST
+        / "native-overlay/usr/lib/systemd/system-generators/try-omarchy-locale"
+    )
+    check(
+        not old_locale_generator_path.exists(),
+        "the old locale system-generator is gone -- only one mechanism may own LANG",
+    )
+
+    locale_script_path = GUEST / "native-overlay/usr/local/bin/try-omarchy-locale"
+    locale_script = read(locale_script_path)
+    locale_script_code = "\n".join(
+        line for line in locale_script.splitlines() if not line.strip().startswith("#")
+    )
+    locale_unit_path = (
+        GUEST / "native-overlay/usr/lib/systemd/system/try-omarchy-locale.service"
+    )
+    locale_unit = read(locale_unit_path)
+
+    locale_gen_format = re.search(
+        r"printf '([^']*)' >\"\$root/etc/locale\.gen\"", configure
+    )
+    generated_locales = (
+        sorted(
+            line.split(" ", 1)[0]
+            for line in locale_gen_format.group(1).split("\\n")
+            if line
+        )
+        if locale_gen_format
+        else []
+    )
+    locale_allowlist_match = re.search(
+        r"case \$candidate in\n\s*([^\n]+)\) locale=\$candidate ;;\n", locale_script
+    )
+    allowlisted_locales = (
+        sorted(token.strip() for token in locale_allowlist_match.group(1).split("|"))
+        if locale_allowlist_match
+        else []
+    )
+    check(
+        locale_gen_format is not None
+        and locale_allowlist_match is not None
+        and generated_locales == allowlisted_locales,
+        "locale script's allowlist cannot drift from the locales configure-rootfs.sh actually "
+        "generates, or a chosen language silently gets no LANG",
+    )
+    check(
+        locale_script_path.is_file()
+        and locale_script_path.stat().st_mode & stat.S_IXUSR != 0
+        and "tryomarchy.locale=" in locale_script
+        and "TRY_OMARCHY_LOCALE_CMDLINE_PATH:-/proc/cmdline" in locale_script,
+        "locale script is an executable that reads the host-chosen locale from the kernel command line",
+    )
+    check(
+        "eval" not in locale_script and "$(" not in locale_script,
+        "the kernel command line is never shell-interpolated",
+    )
+    check(
+        'TRY_OMARCHY_LOCALE_CONF_PATH:-/etc/locale.conf' in locale_script
+        and 'python3 - "$locale_conf" "$locale"' in locale_script,
+        "locale script writes LANG to /etc/locale.conf, and to nowhere else, now that a real unit "
+        "(not a generator) is the one setting it",
+    )
+    check(
+        'LANG={sys.argv[2]}' in locale_script_code
+        and "LC_ALL" not in locale_script_code
+        and "KEYMAP" not in locale_script_code,
+        "locale script sets LANG only, never LC_ALL or the console keymap",
+    )
+    check(
+        "locale=en_US.UTF-8" in locale_script and "exit 0" not in locale_script,
+        "an absent locale token still writes the image's default English locale -- unlike the old "
+        "generator, this script never exits early -- which is what lets switching back to English "
+        "in the launcher win on a persistent VM instead of leaving a stale locale behind",
+    )
+    check(
+        '[ ! -L "$locale_conf" ] || exit 1' in locale_script,
+        "locale script refuses to write through a symlink",
+    )
+
+    check(
+        locale_unit_path.is_file()
+        and "Type=oneshot" in locale_unit
+        and "RemainAfterExit=yes" in locale_unit
+        and "ExecStart=/usr/local/bin/try-omarchy-locale" in locale_unit
+        and "WantedBy=multi-user.target" in locale_unit,
+        "try-omarchy-locale.service is a oneshot unit (not a generator) that runs the locale script",
+    )
+    check(
+        "Before=sddm.service display-manager.service getty@tty1.service" in locale_unit,
+        "the unit orders itself before both entry points a login session can start from: SDDM "
+        "(sddm.service, aliased to display-manager.service once enabled) and a console login "
+        "(getty@tty1.service) -- the same two units omarchy-provision-owner.service, this project's "
+        "pinned upstream first-boot unit, already orders itself Before= (and briefly Conflicts=) for "
+        "the same reason, so this ordering is proven to work in this codebase, not merely asserted",
+    )
+    check(
+        "multi-user.target.wants/try-omarchy-locale.service" in configure
+        and "ln -sfn /usr/lib/systemd/system/try-omarchy-locale.service" in configure,
+        "configure-rootfs.sh enables the unit itself: it runs before arch-chroot, with no "
+        "systemd/D-Bus available to run `systemctl enable` the way finalize-rootfs.sh does for "
+        "sddm.service and omarchy-provision-owner.service, so it links the .wants symlink directly",
+    )
+
     manifest_writer = read(GUEST / "scripts/write-guest-manifest.py")
     check('"kind": "try-omarchy-guest-artifacts"' in manifest_writer, "new artifacts use the native manifest identity")
 
@@ -1482,16 +1681,10 @@ def main() -> None:
         "native background picker override is executable",
     )
     check(cursor_restore.stat().st_mode & stat.S_IXUSR != 0, "native cursor restore helper is executable")
-    alacritty_wrapper = GUEST / "native-overlay/usr/local/bin/alacritty"
-    alacritty_wrapper_text = read(alacritty_wrapper)
-    check(alacritty_wrapper.stat().st_mode & stat.S_IXUSR != 0, "Alacritty VirGL wrapper is executable")
     check(
-        'real=/usr/bin/alacritty' in alacritty_wrapper_text
-        and "export LIBGL_ALWAYS_SOFTWARE=1" in alacritty_wrapper_text
-        and "omarchy.qemu_virgl=1" in alacritty_wrapper_text
-        and 'exec "$real" "$@"' in alacritty_wrapper_text
-        and '"$root/usr/local/bin/alacritty"' in configure,
-        "Alacritty VirGL wrapper forces software GL onto the pacman binary",
+        not (GUEST / "native-overlay/usr/local/bin/alacritty").exists()
+        and '"$root/usr/local/bin/alacritty"' not in configure,
+        "Alacritty uses the accelerated pacman binary without a software GL wrapper",
     )
     xdg_terminal = GUEST / "factory-overlay/usr/local/bin/xdg-terminal-exec"
     xdg_terminal_text = read(xdg_terminal)
@@ -1537,7 +1730,9 @@ def main() -> None:
         'o.exec_on_start("/usr/local/bin/omarchy-native-display-sync")'
         in monitor_fragment
         and 'omarchy_kernel_option_enabled("omarchy.qemu_virgl=1")' in monitor_fragment
-        and "cursor = { invisible = true }" in monitor_fragment,
+        and "cursor = { invisible = true }" in monitor_fragment
+        and 'hl.on("config.reloaded", function()' in monitor_fragment
+        and 'hl.exec_cmd("/usr/local/bin/omarchy-native-display-sync --once")' in monitor_fragment,
         "ARM VirGL profile starts display sync and uses the host-composited cursor",
     )
     with tempfile.TemporaryDirectory() as temporary:
@@ -1607,6 +1802,8 @@ HOTPLUG=1
         environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
         environment["HYPRCTL_LOG"] = str(reload_log)
         environment["OMARCHY_DISPLAY_SYNC_DRM_ROOT"] = str(drm_root)
+        monitor_config = temporary_path / "monitors.lua"
+        environment["OMARCHY_DISPLAY_SYNC_MONITOR_CONFIG"] = str(monitor_config)
         subprocess.run(
             [str(display_sync), "--from-stdin"],
             input=events,
@@ -1625,12 +1822,108 @@ HOTPLUG=1
             "native display sync handles QEMU DisplayID and legacy EDID hotplug modes",
         )
 
+        expected_auto = reload_log.read_text(encoding="utf-8").splitlines()[:2]
+
+        def sync_once():
+            reload_log.write_text("", encoding="utf-8")
+            subprocess.run(
+                [str(display_sync), "--once"],
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                timeout=5,
+                check=True,
+            )
+            return reload_log.read_text(encoding="utf-8").splitlines()
+
+        check(
+            sync_once() == expected_auto,
+            "config reload resync applies live modes without waiting for a hotplug event",
+        )
+        monitor_config.write_text("local omarchy_monitor_scale = 1.25 -- user zoom\n")
+        expected_zoom = [re.sub(r'scale = "[^"]+"', 'scale = "1.25"', line) for line in expected_auto]
+        check(sync_once() == expected_zoom, "reload resync preserves explicit user zoom")
+        reload_log.write_text("", encoding="utf-8")
+        subprocess.run(
+            [str(display_sync), "--from-stdin"],
+            input="ACTION=change\nHOTPLUG=1\n\n",
+            text=True,
+            env=environment,
+            timeout=5,
+            check=True,
+        )
+        check(
+            reload_log.read_text().splitlines() == expected_zoom,
+            "hotplug resync also preserves explicit user zoom",
+        )
+        # A later configuration reload must not reuse the prior zoom or EDID.
+        monitor_config.write_text("local omarchy_monitor_scale = 2\n")
+        (connector / "edid").write_bytes(legacy_edid)
+        expected_resized = expected_auto[1].replace('scale = "1"', 'scale = "2"')
+        check(
+            sync_once() == [expected_resized, expected_resized],
+            "resync rereads a resized display and a newly selected zoom",
+        )
+        # 1920x1080 cannot use exactly 1.7: select a valid nearby scale (5/3).
+        monitor_config.write_text("local omarchy_monitor_scale = 1.7\n")
+        check(
+            all('scale = "1.666667"' in line for line in sync_once()),
+            "resized displays select the nearest scale with integral logical dimensions",
+        )
+        monitor_config.write_text('local omarchy_monitor_scale = "auto"\n')
+        check(
+            sync_once() == [expected_auto[1], expected_auto[1]],
+            "returning to automatic zoom restores live EDID density scaling",
+        )
+
+        # At 4122x2586, Omarchy rounds its 4x preset up to a clean scale of 6
+        # and persists that effective value, which exceeds the preset range.
+        resized_displayid = bytearray(displayid)
+        resized_displayid[12:14] = (4122 - 1).to_bytes(2, "little")
+        resized_displayid[20:22] = (2586 - 1).to_bytes(2, "little")
+        resized_displayid[28] = (-sum(resized_displayid[1:28])) & 0xFF
+        resized_displayid[127] = (-sum(resized_displayid[:127])) & 0xFF
+        qemu_edid[21:23] = bytes([47, 29])
+        qemu_edid[127] = (-sum(qemu_edid[:127])) & 0xFF
+        qemu_edid[256:384] = resized_displayid
+        (connector / "edid").write_bytes(qemu_edid)
+        (legacy_connector / "edid").write_bytes(qemu_edid)
+        monitor_config.write_text("local omarchy_monitor_scale = 6\n")
+        expected_large_zoom = [
+            'eval hl.monitor({ output = "", mode = "modeline 1236 4122 5402 5555 5914 2586 2600 2614 2686 -hsync -vsync", scale = "6" })'
+        ] * 2
+        check(
+            sync_once() == expected_large_zoom,
+            "reload resync preserves effective zoom above the preset range",
+        )
+        reload_log.write_text("", encoding="utf-8")
+        subprocess.run(
+            [str(display_sync), "--from-stdin"],
+            input="ACTION=change\nHOTPLUG=1\n\n",
+            text=True,
+            env=environment,
+            timeout=5,
+            check=True,
+        )
+        check(
+            reload_log.read_text().splitlines() == expected_large_zoom,
+            "hotplug resync preserves effective zoom above the preset range",
+        )
+        monitor_config.write_text("local omarchy_monitor_scale = 5\n")
+        check(
+            sync_once() == expected_large_zoom,
+            "resync considers clean scales above the requested zoom",
+        )
+        monitor_config.write_text('local omarchy_monitor_scale = "auto"\n')
+        check(
+            sync_once() == [line.replace('scale = "6"', 'scale = "2"') for line in expected_large_zoom],
+            "automatic zoom remains available after a large explicit zoom",
+        )
+
     shell_files = [
         GUEST / "test",
         screensaver_override,
         background_switcher_override,
         cursor_restore,
-        alacritty_wrapper,
         kitty_wrapper,
         display_sync,
         mac_share,

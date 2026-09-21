@@ -27,6 +27,22 @@ assert_line_pair() {
     "$file" || fail "expected adjacent lines [$first] and [$second] in $file"
 }
 
+assert_keyboard_lockstep() {
+  local log=$1
+  local geometry=$2
+  local other
+  [[ $(grep -o "tryomarchy.keyboard=$geometry" "$log" | wc -l | tr -d ' ') == 1 ]] || \
+    fail "expected exactly one tryomarchy.keyboard=$geometry token in $log"
+  [[ $(grep -c "^TRYOMARCHY_KEYBOARD=$geometry$" "$log") == 1 ]] || \
+    fail "Cocoa env must match cmdline token $geometry in $log"
+  for other in ansi iso jis; do
+    if [[ $other != "$geometry" ]]; then
+      assert_not_contains "$(<"$log")" "tryomarchy.keyboard=$other"
+      assert_not_contains "$(<"$log")" "TRYOMARCHY_KEYBOARD=$other"
+    fi
+  done
+}
+
 test_root=$(mktemp -d '/private/tmp/omarchy-qemu-ssh-contract.XXXXXX')
 case "$test_root" in
   /private/tmp/omarchy-qemu-ssh-contract.??????) ;;
@@ -46,7 +62,13 @@ mkdir -p \
   "$resources/scripts" \
   "$shim_dir"
 
-/bin/cp "$macos_dir/run-qemu-gpu.sh" "$resources/scripts/run-qemu-gpu.sh"
+# The copied launcher must never reap another app's live run directories.
+# Keep the unique prefix directly in /private/tmp for short Unix socket paths.
+sed "s|/private/tmp/omarchy-qemu-gpu\\.|/private/tmp/${test_root##*/}-run.|g" \
+  "$macos_dir/run-qemu-gpu.sh" >"$resources/scripts/run-qemu-gpu.sh"
+if grep -Fq '/private/tmp/omarchy-qemu-gpu.' "$resources/scripts/run-qemu-gpu.sh"; then
+  fail "test launcher still refers to production run directories"
+fi
 /bin/cp "$macos_dir/qemu-port-forwarding.sh" "$resources/scripts/qemu-port-forwarding.sh"
 /bin/cp "$macos_dir/qemu-networking.sh" "$resources/scripts/qemu-networking.sh"
 chmod 755 "$resources/scripts/run-qemu-gpu.sh"
@@ -65,6 +87,14 @@ if [[ ${1:-} == --wait-for-qmp ]]; then
   fi
   exit "${FAKE_QMP_READY_STATUS:-0}"
 fi
+if [[ ${1:-} == --host-keyboard-geometry ]]; then
+  if [[ -n ${FAKE_HOST_KEYBOARD_FAIL:-} ]]; then
+    printf 'cannot detect host keyboard geometry\n' >&2
+    exit 1
+  fi
+  printf '%s\n' "${FAKE_HOST_KEYBOARD:-iso}"
+  exit 0
+fi
 if [[ ${1:-} == --bridge-native-audio && ${FAKE_AUDIO_EARLY_EXIT:-0} == 1 ]]; then
   sleep 0.05
   exit 0
@@ -73,6 +103,9 @@ if [[ ${1:-} == --bridge-native-audio \
    || ${1:-} == --bridge-native-authentication \
    || ${1:-} == --bridge-native-clipboard \
    || ${1:-} == --bridge-native-camera ]]; then
+  if [[ $1 == --bridge-native-audio && ${FAKE_AUDIO_EXIT_EARLY:-0} == 1 ]]; then
+    exit 0
+  fi
   while kill -0 "$2" 2>/dev/null; do
     sleep 0.02
   done
@@ -123,6 +156,7 @@ case " $* " in
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import sys
 import threading
@@ -131,7 +165,11 @@ import time
 arguments = sys.argv[1:]
 is_recovery = "Try Omarchy Boot Recovery" in arguments
 log_variable = "FAKE_QEMU_RECOVERY_LOG" if is_recovery else "FAKE_QEMU_LOG"
-Path(os.environ[log_variable]).write_text("\n".join(arguments) + "\n")
+geometry = os.environ.get("TRYOMARCHY_KEYBOARD", "")
+Path(os.environ[log_variable]).write_text(
+    "\n".join(arguments) + f"\nTRYOMARCHY_KEYBOARD={geometry}\n"
+)
+Path(os.environ[log_variable] + ".pid").write_text(str(os.getpid()))
 
 if is_recovery:
     export_path = None
@@ -195,7 +233,18 @@ if os.environ.get("FAKE_QEMU_SKIP_SOCKETS") != "1":
                     client.close()
             threading.Thread(target=greet, daemon=True).start()
 
-time.sleep(float(os.environ.get("FAKE_QEMU_LIFETIME", "0.20")))
+if os.environ.get("FAKE_QEMU_WAIT_FOR_TERMINATION") == "1":
+    # Failure scenarios need QEMU alive until launcher cleanup, regardless of
+    # host speed. The alarm only bounds a broken launcher/test, not success.
+    def timed_out(signum, frame):
+        Path(os.environ[log_variable] + ".timed-out").touch()
+        raise SystemExit("fake QEMU timed out waiting for launcher cleanup")
+
+    signal.signal(signal.SIGALRM, timed_out)
+    signal.alarm(60)
+    signal.pause()
+else:
+    time.sleep(float(os.environ.get("FAKE_QEMU_LIFETIME", "0.20")))
 for server in servers:
     server.close()
 raise SystemExit(int(os.environ.get("FAKE_QEMU_STATUS", "0")))
@@ -341,9 +390,20 @@ SH
 cat >"$shim_dir/ps" <<'SH'
 #!/bin/bash
 [[ ${FAKE_PROCESS_INSPECTION_UNAVAILABLE:-0} != 1 ]] || exit 77
+if [[ ${FAKE_PS_DELAY:-0} != 0 && $* == *' -o state=' ]]; then
+  sleep "$FAKE_PS_DELAY"
+fi
 if [[ ${FAKE_LARGE_PROCESS_LIST:-0} == 1 && "$*" == "-axo pid=,command=" ]]; then
   printf '999999 /bin/bash run-qemu-gpu.sh\n'
   /usr/bin/awk 'BEGIN { for (i=0; i<10000; i++) print 800000+i, "unrelated process with enough output to fill a pipe buffer" }'
+fi
+if [[ ${FAKE_SHUTDOWN_RACE:-0} == 1 && -f ${FAKE_QEMU_LOG:-}.pid       && $* == "-p $(cat "$FAKE_QEMU_LOG.pid") -o state="       && ! -e $FAKE_QEMU_LOG.raced ]]; then
+  state=$(/bin/ps "$@" 2>/dev/null) || exit $?
+  touch "$FAKE_QEMU_LOG.raced"
+  # Return a stale live snapshot only after QEMU and its bridges have exited.
+  sleep 0.5
+  printf '%s\n' "$state"
+  exit 0
 fi
 exec /bin/ps "$@"
 SH
@@ -483,6 +543,7 @@ run_scenario() {
   else
     actual_status=$?
   fi
+  [[ ! -e $scenario_dir/qemu.log.timed-out ]] || fail "$scenario timed out waiting for launcher cleanup"
   if [[ $actual_status != "$expected_status" ]]; then
     /bin/cat "$scenario_dir/stderr" >&2 || true
     fail "$scenario expected status $expected_status, got $actual_status"
@@ -502,6 +563,7 @@ assert_line_pair "$test_root/disabled/qemu.log" -kernel "$persistent_root/boot/k
 assert_line_pair "$test_root/disabled/qemu.log" -initrd "$persistent_root/boot/initramfs"
 assert_not_contains "$disabled_qemu" hostfwd
 assert_not_contains "$disabled_qemu" tryomarchy.ssh_access
+assert_keyboard_lockstep "$test_root/disabled/qemu.log" iso
 assert_contains "$disabled_qemu" \
   'cocoa,gl=es,show-cursor=on,zoom-to-fit=on,full-screen=on,full-grab=on,immersive=on,swap-opt-cmd=off'
 assert_contains "$disabled_qemu" \
@@ -553,6 +615,28 @@ for stopped_pid in "$readiness_pid" "$target_pid"; do
 done
 assert_not_contains "$(<"$test_root/monitor-cancel/stderr")" '[qemu-gpu] Ready. QMP:'
 
+run_scenario shutdown-race 0 '' FAKE_SHUTDOWN_RACE=1
+[[ -e $test_root/shutdown-race/qemu.log.raced ]] || fail 'shutdown race was not exercised'
+# Slow process checks deliberately exceed the old two-second QEMU lifetime.
+run_scenario audio-exits-early 1 '' \
+  FAKE_AUDIO_EXIT_EARLY=1 FAKE_QEMU_WAIT_FOR_TERMINATION=1 FAKE_PS_DELAY=0.1
+assert_contains "$(<"$test_root/audio-exits-early/stderr")" 'native audio bridge exited while QEMU was running'
+
+run_scenario keyboard-ansi 0 '' FAKE_HOST_KEYBOARD=ansi
+assert_keyboard_lockstep "$test_root/keyboard-ansi/qemu.log" ansi
+run_scenario keyboard-jis 0 '' FAKE_HOST_KEYBOARD=jis
+assert_keyboard_lockstep "$test_root/keyboard-jis/qemu.log" jis
+run_scenario keyboard-helper-fail 1 '' FAKE_HOST_KEYBOARD_FAIL=1
+assert_contains "$(<"$test_root/keyboard-helper-fail/stderr")" \
+  'cannot detect the host Mac keyboard geometry'
+[[ ! -e $test_root/keyboard-helper-fail/qemu.log ]] || \
+  fail 'failed keyboard probe started QEMU'
+run_scenario keyboard-invalid 1 '' FAKE_HOST_KEYBOARD=ISO
+assert_contains "$(<"$test_root/keyboard-invalid/stderr")" \
+  'host Mac keyboard geometry is invalid'
+[[ ! -e $test_root/keyboard-invalid/qemu.log ]] || \
+  fail 'invalid keyboard geometry started QEMU'
+
 # Exercise resource values through the real launcher and its QEMU boundary.
 run_scenario resources 0 '' FAKE_HOST_CPUS=18 \
   OMARCHY_QEMU_GPU_CPUS=18 OMARCHY_QEMU_GPU_MEMORY_MIB=12288
@@ -599,17 +683,15 @@ assert_not_contains "$nested_fallback_qemu" virtualization=on
 assert_not_contains "$nested_fallback_qemu" kernel-irqchip=on
 assert_contains "$(<"$test_root/nested-fallback/nested.log")" probe
 
-# macOS 15 can pass the paused EL2 probe but abort when a vCPU runs (#211).
-# It must never probe or launch EL2, even when QEMU would report support.
+# The pinned GPU runtime requires macOS 26. Reject older hosts before any
+# storage changes, nested-virtualization probes, or QEMU launches.
 for version in 15.0 15.7.7; do
-  scenario="nested-macos-$version"
-  run_scenario "$scenario" 0 '' FAKE_MACOS_VERSION="$version"
-  assert_line_pair "$test_root/$scenario/qemu.log" -machine \
-    'virt,accel=hvf,gic-version=3'
-  assert_not_contains "$(<"$test_root/$scenario/qemu.log")" virtualization=on
-  assert_not_contains "$(<"$test_root/$scenario/qemu.log")" kernel-irqchip=on
+  scenario="unsupported-macos-$version"
+  run_scenario "$scenario" 1 '' FAKE_MACOS_VERSION="$version"
+  [[ ! -s $test_root/$scenario/storage.log ]] || fail "macOS $version touched storage"
+  [[ ! -e $test_root/$scenario/qemu.log ]] || fail "macOS $version started QEMU"
   [[ ! -e $test_root/$scenario/nested.log ]] || fail "macOS $version probed EL2"
-  assert_contains "$(<"$test_root/$scenario/stderr")" 'using the compatible EL1 path'
+  assert_contains "$(<"$test_root/$scenario/stderr")" 'requires macOS 26 or newer'
 done
 
 for version in 26.0 26.1 27.0; do
@@ -621,28 +703,42 @@ for version in 26.0 26.1 27.0; do
   assert_contains "$(<"$test_root/$scenario/nested.log")" probe
 done
 
-# An unavailable or unrecognized host version must keep the compatible path.
+# An unavailable or unrecognized host version cannot satisfy the OS minimum.
 for version in '' unknown; do
-  scenario="nested-unknown-$version"
-  run_scenario "$scenario" 0 '' FAKE_MACOS_VERSION="$version"
-  assert_line_pair "$test_root/$scenario/qemu.log" -machine \
-    'virt,accel=hvf,gic-version=3'
+  scenario="unknown-macos-$version"
+  run_scenario "$scenario" 1 '' FAKE_MACOS_VERSION="$version"
+  [[ ! -s $test_root/$scenario/storage.log ]] || fail 'unknown macOS version touched storage'
+  [[ ! -e $test_root/$scenario/qemu.log ]] || fail 'unknown macOS version started QEMU'
   [[ ! -e $test_root/$scenario/nested.log ]] || fail 'unknown macOS version probed EL2'
+  assert_contains "$(<"$test_root/$scenario/stderr")" 'requires macOS 26 or newer'
 done
-run_scenario nested-version-failure 0 '' FAKE_MACOS_VERSION_STATUS=1
-assert_line_pair "$test_root/nested-version-failure/qemu.log" -machine \
-  'virt,accel=hvf,gic-version=3'
+run_scenario nested-version-failure 1 '' FAKE_MACOS_VERSION_STATUS=1
+[[ ! -s $test_root/nested-version-failure/storage.log ]] || fail 'failed version query touched storage'
+[[ ! -e $test_root/nested-version-failure/qemu.log ]] || fail 'failed version query started QEMU'
 [[ ! -e $test_root/nested-version-failure/nested.log ]] || fail 'failed version query probed EL2'
 
 run_scenario audio-shutdown-race 0 '' FAKE_AUDIO_EARLY_EXIT=1 FAKE_QEMU_LIFETIME=0.5
 assert_not_contains "$(<"$test_root/audio-shutdown-race/stderr")" 'native audio bridge exited'
-run_scenario audio-failure 1 '' FAKE_AUDIO_EARLY_EXIT=1 FAKE_QEMU_LIFETIME=10
+run_scenario audio-failure 1 '' FAKE_AUDIO_EARLY_EXIT=1 FAKE_QEMU_WAIT_FOR_TERMINATION=1
 assert_contains "$(<"$test_root/audio-failure/stderr")" 'native audio bridge exited while QEMU was running'
 
 run_scenario non-immersive 0 '' OMARCHY_QEMU_GPU_IMMERSIVE=0
 non_immersive_qemu=$(<"$test_root/non-immersive/qemu.log")
 assert_contains "$non_immersive_qemu" \
   'cocoa,gl=es,show-cursor=on,zoom-to-fit=on,full-screen=off,full-grab=on,immersive=off,swap-opt-cmd=off'
+
+# An app update must not advertise its own locale capability for an older
+# selected disk. Check both the rejection and a supported saved boot kit.
+run_scenario locale-unsupported 1 '' OMARCHY_QEMU_GPU_LOCALE=zh_TW.UTF-8
+assert_contains "$(<"$test_root/locale-unsupported/stderr")" 'does not support language selection'
+[[ ! -f $test_root/locale-unsupported/qemu.log ]] || fail 'unsupported locale started QEMU'
+saved_command_line=$(<"$persistent_root/boot/command-line")
+printf '%s tryomarchy.locale_support=1\n' "$saved_command_line" >"$persistent_root/boot/command-line"
+run_scenario locale-supported 0 '' OMARCHY_QEMU_GPU_LOCALE=zh_TW.UTF-8
+assert_contains "$(<"$test_root/locale-supported/qemu.log")" 'tryomarchy.locale=zh_TW.UTF-8'
+run_scenario locale-english 0 '' OMARCHY_QEMU_GPU_LOCALE=
+assert_not_contains "$(<"$test_root/locale-english/qemu.log")" 'tryomarchy.locale='
+printf '%s\n' "$saved_command_line" >"$persistent_root/boot/command-line"
 
 # Simulate installing a newer app build after the first VM was created. The
 # saved VM must be selected before the launcher even considers the absent new
@@ -652,8 +748,10 @@ assert_contains "$non_immersive_qemu" \
 printf 'new-kernel\n' >"$guest/vmlinuz-linux"
 printf 'new-initramfs\n' >"$guest/initramfs-linux.img"
 /usr/bin/plutil -replace kernelCommandLine -string \
-  'root=/dev/vda rw rootwait console=tty0 console=hvc0 loglevel=5 systemd.show_status=false rd.systemd.show_status=false mitigations=off nowatchdog' \
+  'root=/dev/vda rw rootwait console=tty0 console=hvc0 loglevel=5 systemd.show_status=false rd.systemd.show_status=false mitigations=off nowatchdog tryomarchy.locale_support=1' \
   "$guest/launch.plist"
+run_scenario locale-older-disk-new-app 1 '' OMARCHY_QEMU_GPU_LOCALE=zh_TW.UTF-8
+assert_contains "$(<"$test_root/locale-older-disk-new-app/stderr")" 'does not support language selection'
 printf 'previous boot console\n' >"$persistent_root/console.log"
 run_scenario enabled 0 '' OMARCHY_QEMU_GPU_PORT_FORWARDS=tcp:2223:22
 [[ -f $persistent_root/console.log.1 ]] || \
@@ -666,6 +764,7 @@ assert_line_pair "$test_root/enabled/qemu.log" -netdev \
 assert_line_pair "$test_root/enabled/qemu.log" -kernel "$persistent_root/boot/kernel"
 assert_line_pair "$test_root/enabled/qemu.log" -initrd "$persistent_root/boot/initramfs"
 assert_contains "$enabled_qemu" tryomarchy.ssh_access=1
+assert_keyboard_lockstep "$test_root/enabled/qemu.log" iso
 assert_contains "$enabled_qemu" loglevel=4
 assert_not_contains "$enabled_qemu" loglevel=5
 assert_not_contains "$enabled_qemu" 0.0.0.0
@@ -745,6 +844,10 @@ assert_line_pair "$test_root/recovery-allowed/qemu.log" -kernel "$recovery_root/
 assert_line_pair "$test_root/recovery-allowed/qemu.log" -initrd "$recovery_root/boot/initramfs"
 assert_contains "$(<"$test_root/recovery-allowed/qemu.log")" loglevel=3
 assert_not_contains "$(<"$test_root/recovery-allowed/qemu.log")" loglevel=5
+assert_not_contains "$(<"$test_root/recovery-allowed/recovery.log")" tryomarchy.keyboard=
+[[ $(grep -c '^TRYOMARCHY_KEYBOARD=$' "$test_root/recovery-allowed/recovery.log") == 1 ]] || \
+  fail 'recovery QEMU must not inherit TRYOMARCHY_KEYBOARD'
+assert_keyboard_lockstep "$test_root/recovery-allowed/qemu.log" iso
 assert_contains "$(<"$recovery_root/boot/kernel")" recovered-kernel
 assert_contains "$(<"$recovery_root/boot/initramfs")" recovered-initramfs
 assert_contains "$(<"$recovery_root/boot/command-line")" loglevel=3
@@ -763,6 +866,8 @@ assert_not_contains "$(<"$test_root/recovery-relaunch/stderr")" 'needs consent'
 assert_line_pair "$test_root/recovery-relaunch/qemu.log" -kernel "$recovery_root/boot/kernel"
 assert_line_pair "$test_root/recovery-relaunch/qemu.log" -initrd "$recovery_root/boot/initramfs"
 assert_contains "$(<"$test_root/recovery-relaunch/qemu.log")" loglevel=3
+assert_keyboard_lockstep "$test_root/recovery-relaunch/qemu.log" iso
+assert_not_contains "$(<"$recovery_root/boot/command-line")" tryomarchy.keyboard=
 assert_contains "$(<"$recovery_root/rootfs.ext4")" legacy-user-disk
 
 run_scenario preset 0 '' OMARCHY_QEMU_GPU_PORT_FORWARDS=tcp:2222:22
@@ -796,6 +901,7 @@ assert_line_pair "$test_root/ephemeral/qemu.log" -m 12288M
 assert_contains "$(<"$test_root/ephemeral/qemu.log")" \
   'user,id=omarchy-net,hostfwd=tcp:127.0.0.1:2224-:22'
 assert_contains "$(<"$test_root/ephemeral/qemu.log")" tryomarchy.ssh_access=1
+assert_keyboard_lockstep "$test_root/ephemeral/qemu.log" iso
 assert_contains "$(<"$test_root/ephemeral/storage.log")" 'select ephemeral'
 assert_line_pair "$test_root/ephemeral/qemu.log" -kernel "$guest/vmlinuz-linux"
 assert_line_pair "$test_root/ephemeral/qemu.log" -initrd "$guest/initramfs-linux.img"
@@ -806,7 +912,8 @@ run_scenario malformed 1 '' OMARCHY_QEMU_GPU_PORT_FORWARDS=tcp:02222:22
 assert_contains "$(<"$test_root/malformed/stderr")" 'canonical decimal'
 
 run_scenario reset-only 0 --reset-storage-only \
-  OMARCHY_QEMU_GPU_PORT_FORWARDS=tcp:2225:22
+  OMARCHY_QEMU_GPU_PORT_FORWARDS=tcp:2225:22 \
+  FAKE_HOST_KEYBOARD_FAIL=1
 assert_contains "$(<"$test_root/reset-only/storage.log")" 'select reset'
 [[ ! -e $test_root/reset-only/qemu.log ]] || fail 'reset-only launch started QEMU'
 assert_not_contains "$(<"$test_root/reset-only/stderr")" tryomarchy.ssh_access
@@ -850,5 +957,13 @@ assert_not_contains "$(<"$test_root/large-process-list/stderr")" 'Broken pipe'
 run_scenario prebaked-token 1 '' OMARCHY_QEMU_GPU_PORT_FORWARDS=tcp:2222:22
 [[ ! -s $test_root/prebaked-token/storage.log ]] || fail 'prebaked token touched storage'
 assert_contains "$(<"$test_root/prebaked-token/stderr")" 'launcher-owned SSH activation argument'
+
+/usr/bin/plutil -replace kernelCommandLine -string \
+  'root=/dev/vda rw rootwait console=tty0 console=hvc0 tryomarchy.keyboard=iso' \
+  "$guest/launch.plist"
+run_scenario prebaked-keyboard 1 ''
+[[ ! -s $test_root/prebaked-keyboard/storage.log ]] || fail 'prebaked keyboard token touched storage'
+assert_contains "$(<"$test_root/prebaked-keyboard/stderr")" \
+  'launcher-owned keyboard geometry argument'
 
 printf 'run-qemu-ssh-contract.test: PASS\n'

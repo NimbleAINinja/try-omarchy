@@ -167,9 +167,13 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private let saveResources: (VMResources) -> Void
     private let networkPreferences: () -> VMNetworkPreferences
     private let saveNetworkPreferences: (VMNetworkPreferences) -> String?
+    private let networkIdentity: VMNetworkIdentityAccess
     private var networkEditor: NetworkEditor?
     private let immersiveMode: () -> Bool
     private let setImmersiveMode: (Bool) -> Void
+    private let languageStatus: () -> LanguageMenuState
+    private let setLanguage: (String?) -> Void
+    private let integrationCacheURL: () -> URL?
     private let launch: () -> Void
     private let canResetStorage: Bool
     private let storageLocation: () -> String?
@@ -186,6 +190,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private var pendingResetSpaceEstimate: String?
     private var resetConfirmationPrompt: ResetConfirmationPrompt?
     private weak var startMenuScrollView: NSScrollView?
+    private var preferredContentHeight: CGFloat = 832
     private(set) var portForwardingEditor: PortForwardingEditor?
     private(set) var resourceEditor: VMResourceEditor?
     private weak var immersiveCaption: NSTextField?
@@ -255,8 +260,12 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         saveResources: @escaping (VMResources) -> Void = { _ in },
         networkPreferences: @escaping () -> VMNetworkPreferences = { VMNetworkPreferences() },
         saveNetworkPreferences: @escaping (VMNetworkPreferences) -> String? = { _ in nil },
+        networkIdentity: VMNetworkIdentityAccess = .unavailable,
         immersiveMode: @escaping () -> Bool = { true },
         setImmersiveMode: @escaping (Bool) -> Void = { _ in },
+        languageStatus: @escaping () -> LanguageMenuState = { .systemDefault },
+        setLanguage: @escaping (String?) -> Void = { _ in },
+        integrationCacheURL: @escaping () -> URL? = { nil },
         launch: @escaping () -> Void
     ) {
         self.accessibilityStatus = accessibilityStatus
@@ -284,8 +293,12 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         self.saveResources = saveResources
         self.networkPreferences = networkPreferences
         self.saveNetworkPreferences = saveNetworkPreferences
+        self.networkIdentity = networkIdentity
         self.immersiveMode = immersiveMode
         self.setImmersiveMode = setImmersiveMode
+        self.languageStatus = languageStatus
+        self.setLanguage = setLanguage
+        self.integrationCacheURL = integrationCacheURL
         self.launch = launch
 
         window = NSWindow(
@@ -313,15 +326,22 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     }
 
     func prepareForPresentation(visibleFrame: NSRect?) {
+        let scrollOffset = startMenuScrollView?.contentView.bounds.origin.y ?? 0
         render()
         if let visibleFrame {
-            // The resources row adds one 72pt row to the menu that previously
-            // fit at 760. At 690 the launch button cleared the bottom edge by
-            // 15pt, which any difference in system font metrics turned into a
-            // button clipped off the window; on displays shorter than the
-            // window the content scrolls rather than clips.
-            let availableHeight = max(480, visibleFrame.height - 32)
-            window.setContentSize(NSSize(width: 600, height: min(832, availableHeight)))
+            let availableContent = window.contentRect(
+                forFrameRect: visibleFrame.insetBy(dx: 0, dy: 16)
+            )
+            window.setContentSize(NSSize(
+                width: 600,
+                height: min(preferredContentHeight, max(1, availableContent.height))
+            ))
+            content.layoutSubtreeIfNeeded()
+            if let scrollView = startMenuScrollView, let document = scrollView.documentView {
+                let maximumOffset = max(0, document.frame.height - scrollView.contentView.bounds.height)
+                scrollView.contentView.scroll(to: NSPoint(x: 0, y: min(scrollOffset, maximumOffset)))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
         }
     }
 
@@ -440,6 +460,8 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         NSApp.terminate(nil)
         return false
     }
+
+    @objc private func reviewIntegrations() { GuestIntegrationSetup.show(window: window) }
 
     private func render() {
         let preservedScrollOffset = startMenuScrollView?.contentView.bounds.minY ?? 0
@@ -581,6 +603,25 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
             minimumHeight: 72
         )
 
+        let languageState = languageStatus()
+        let languagePresentation = StartMenuPresentation.language(state: languageState)
+        let languageRow = permissionRow(
+            symbolName: "globe",
+            title: "Language",
+            detail: languagePresentation.detail,
+            granted: languagePresentation.isNonDefault,
+            statusLabels: (languagePresentation.statusLabel, languagePresentation.statusLabel),
+            actions: [
+                (
+                    languagePresentation.actionTitle,
+                    languagePresentation.isNonDefault
+                        ? #selector(useDefaultLanguage)
+                        : #selector(selectTraditionalChineseLanguage)
+                ),
+            ],
+            actionsEnabled: languageState.supportsSelection
+        )
+
         let storageStatus = storageLocationStatus()
         var storageRow: NSView?
         if let storagePath = storageLocation() {
@@ -637,7 +678,14 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         if let storageRow {
             integrationRowViews.append(storageRow)
         }
-        integrationRowViews.append(contentsOf: [resourceRow, networkingRow, portForwardingRow, immersiveRow])
+        integrationRowViews.append(contentsOf: [resourceRow, networkingRow, portForwardingRow, immersiveRow, languageRow])
+        let integrationStatus = GuestIntegrationCache.read(integrationCacheURL())
+        integrationRowViews.insert(permissionRow(
+            symbolName: "arrow.triangle.2.circlepath", title: "VM integrations",
+            detail: "Last check: \(integrationStatus?.summary ?? "Not checked yet"). Checked again after each VM launch.",
+            granted: false, statusLabels: ("", ""),
+            actions: [("REVIEW…", #selector(reviewIntegrations))]
+        ), at: 0)
 
         var permissionRowsAndSeparators: [NSView] = []
         for (index, row) in permissionRowViews.enumerated() {
@@ -708,12 +756,6 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         reset.heightAnchor.constraint(equalToConstant: 30).isActive = true
         reset.widthAnchor.constraint(greaterThanOrEqualToConstant: 154).isActive = true
 
-        let resetViews: [NSView] = [reset]
-        let resetSection = NSStackView(views: resetViews)
-        resetSection.orientation = .vertical
-        resetSection.alignment = .centerX
-        resetSection.spacing = 4
-
         let launchButtonTitle = launchInProgress ? "Launching Omarchy…" : "Launch Omarchy"
         let launchButton = OmarchyActionButton(
             title: launchButtonTitle,
@@ -745,14 +787,48 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
             launchButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 500),
         ])
 
+        let resetHeading = sectionHeading("RESET")
+        let resetSymbol = NSImageView()
+        resetSymbol.image = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: nil)
+        resetSymbol.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 19, weight: .medium)
+        resetSymbol.contentTintColor = OmarchyStartMenuTheme.accent
+        resetSymbol.identifier = NSUserInterfaceItemIdentifier("reset-symbol")
+        resetSymbol.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            resetSymbol.widthAnchor.constraint(equalToConstant: 26),
+            resetSymbol.heightAnchor.constraint(equalToConstant: 26),
+        ])
+        let resetTitle = NSTextField(labelWithString: "Factory reset")
+        resetTitle.font = .monospacedSystemFont(ofSize: 13, weight: .bold)
+        resetTitle.textColor = OmarchyStartMenuTheme.foreground
+        let resetDetail = NSTextField(wrappingLabelWithString: "Erase this VM and return it to factory settings.")
+        resetDetail.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        resetDetail.textColor = OmarchyStartMenuTheme.muted
+        resetDetail.maximumNumberOfLines = 2
+        let resetLabels = NSStackView(views: [resetTitle, resetDetail])
+        resetLabels.orientation = .vertical
+        resetLabels.alignment = .leading
+        resetLabels.spacing = 3
+        resetLabels.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        resetLabels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        resetDetail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        resetDetail.trailingAnchor.constraint(lessThanOrEqualTo: resetLabels.trailingAnchor).isActive = true
+        let resetRow = NSStackView(views: [resetSymbol, resetLabels, reset])
+        resetRow.orientation = .horizontal
+        resetRow.alignment = .centerY
+        resetRow.spacing = 12
+        resetRow.translatesAutoresizingMaskIntoConstraints = false
+        resetRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        let resetCard = themedCard(containing: resetRow, identifier: "reset-card")
+
         let stack = NSStackView(views: [
             headingStack,
             permissionHeading,
             permissionCard,
             integrationHeading,
             integrationCard,
-            launchButton,
-            resetSection,
+            resetHeading,
+            resetCard,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -761,9 +837,15 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         stack.setCustomSpacing(6, after: permissionHeading)
         stack.setCustomSpacing(16, after: permissionCard)
         stack.setCustomSpacing(6, after: integrationHeading)
-        stack.setCustomSpacing(32, after: integrationCard)
-        stack.setCustomSpacing(24, after: launchButton)
+        stack.setCustomSpacing(6, after: resetHeading)
         stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let actions = NSStackView(views: [launchButton])
+        actions.orientation = .vertical
+        actions.alignment = .leading
+        actions.spacing = 12
+        actions.identifier = NSUserInterfaceItemIdentifier("start-menu-actions")
+        actions.translatesAutoresizingMaskIntoConstraints = false
 
         let document = StartMenuDocumentView()
         document.translatesAutoresizingMaskIntoConstraints = false
@@ -779,27 +861,32 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         scrollView.identifier = NSUserInterfaceItemIdentifier("start-menu-scroll")
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(scrollView)
+        content.addSubview(actions)
         startMenuScrollView = scrollView
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: content.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: actions.topAnchor, constant: -12),
+            actions.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 42),
+            actions.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -42),
+            actions.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
             document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
             document.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
             stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 42),
             stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -42),
             stack.topAnchor.constraint(equalTo: document.topAnchor, constant: 26),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -32),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
             permissionCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             integrationCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            resetSection.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            launchButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            resetCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            launchButton.widthAnchor.constraint(equalTo: actions.widthAnchor),
         ])
 
         content.layoutSubtreeIfNeeded()
         document.layoutSubtreeIfNeeded()
+        preferredContentHeight = ceil(stack.fittingSize.height + actions.fittingSize.height + 58)
         let maximumOffset = max(
             0,
             document.frame.height - scrollView.contentView.bounds.height
@@ -1353,7 +1440,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         guard !launchInProgress, !resetInProgress, networkEditor == nil else { return }
         permissionWindowRestorer.cancel()
         let editor = NetworkEditor(preferences: networkPreferences(), interfaces: VMBridgeInterfaces.available(),
-            save: saveNetworkPreferences, didClose: { [weak self] in
+            identity: networkIdentity, save: saveNetworkPreferences, didClose: { [weak self] in
                 self?.networkEditor = nil
                 self?.render()
             })
@@ -1416,6 +1503,18 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
                 .priority: NSAccessibilityPriorityLevel.medium.rawValue,
             ]
         )
+    }
+
+    @objc private func selectTraditionalChineseLanguage() {
+        guard !launchInProgress, !resetInProgress else { return }
+        setLanguage(GuestLocaleCatalog.traditionalChinese.localeToken)
+        render()
+    }
+
+    @objc private func useDefaultLanguage() {
+        guard !launchInProgress, !resetInProgress else { return }
+        setLanguage(nil)
+        render()
     }
 
     private func confirmReset() {

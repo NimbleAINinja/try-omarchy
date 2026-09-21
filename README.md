@@ -215,6 +215,24 @@ bridged launches do not request your password. QEMU continues to run as your
 user. **Remove Networking Helper** unregisters the service when it is no longer
 needed. Shut down any bridged VM before repairing or removing the helper.
 
+Persistent VMs keep a stable, randomly generated bridged MAC address across app
+updates, disk replacement, resizing, resets, and moves of the complete VM data
+folder. Existing saved addresses are retained when upgrading from older builds.
+The Networking sheet displays the address after the first bridged launch;
+**Copy MAC** makes it available for a DHCP reservation. **Generate new MAC…**
+shows a proposed address and requires confirmation while the VM is stopped.
+This action saves immediately; DHCP reservations may need updating. Cancelling
+the confirmation leaves the existing identity unchanged.
+
+A copy of the complete VM data folder includes its network identity. To run a
+copy as a separate VM, generate a new MAC before running both copies. Move or
+restore the complete data folder to retain the identity; importing only a disk
+into a new workspace does not transfer its network identity. Ephemeral bridged
+VMs receive a fresh address on each launch. Damaged identity records produce an
+error instead of silently changing the MAC. Migration and regeneration retain
+the preceding record as `network-identities/current.previous.json` in the VM
+data folder; restore a known-good record only with the VM stopped.
+
 For repeated local development builds, use a consistent Apple Development
 signing identity (the `DEVELOPMENT_SIGN_IDENTITY` option above). Ad-hoc-signed
 helper registrations are not reliable across rebuilds on the tested macOS
@@ -300,7 +318,17 @@ Loopback binding prevents devices on Wi-Fi, Ethernet, or the wider LAN from
 connecting. It does not isolate the listener from other users or processes on
 the same Mac; guest SSH authentication is still required.
 
+### Touch ID for 1Password
+
+An optional process-scoped integration can use the Mac's Touch ID to unlock
+1Password inside the guest. Existing synced passwords and passkeys stay managed
+by 1Password. See [setup and authorization boundaries](docs/onepassword-touch-id.md).
+
 ### Touch ID for sudo
+
+Guest clock recovery handles time lost during Mac sleep so fresh signed
+approvals remain usable after wake. Existing VMs need the
+[guest clock recovery installer](docs/guest-clock-recovery.md).
 
 The native authentication bridge can enroll this Mac and use
 Touch ID as a sufficient authentication method for guest `sudo`. Open
@@ -361,17 +389,34 @@ at least 4 GiB for macOS for allocations above the 4 GiB baseline. They also
 accept values between menu steps, down to the guest's 2048 MiB minimum. The
 4 GiB baseline remains available on smaller hosts such as CI runners.
 
+## Traditional Chinese
+
+Choose **Switch to Traditional Chinese (繁體中文)** next to **Language** on
+the start menu to boot Omarchy in Traditional Chinese (`zh_TW.UTF-8`);
+**Use English (Default)** switches back. The change takes effect on the next
+launch.
+
+Older saved VMs do not gain language support when the Mac app updates. Their
+Language row stays disabled until **Reset Omarchy** creates a new factory VM.
+Reset erases the VM's data; back up anything you need first. The setting remains
+available for supported saved VMs across later app updates.
+
+The desktop, file manager, browser, and system dialogs are translated, and
+fcitx5 adds Chewing (Bopomofo) input, reachable with `Ctrl + Space`; the US
+keyboard layout remains the default input method. Omarchy's own setup wizard
+and menus stay in English either way: upstream Omarchy has no translation
+mechanism, and those strings are hardcoded in its shell scripts.
+
 ## Requirements
 
 - Apple Silicon Mac (`arm64`)
-- macOS 15 or newer
+- macOS 26 or newer
 - At least 8 GB free initially
 
 On M3 and newer Apple Silicon running macOS 26 or newer, Try Omarchy also
 exposes ARM EL2 to Linux, so the guest provides `/dev/kvm` for nested VMs and
-compatible VMMs. macOS 15 and older Apple Silicon Macs automatically keep the
-normal non-nested launch path. macOS 15 remains supported for running Omarchy;
-nested virtualization is disabled there to avoid a QEMU startup crash.
+compatible VMMs. Older Apple Silicon Macs automatically keep the normal
+non-nested launch path.
 
 ## Data and updates
 
@@ -413,6 +458,60 @@ local repository. Installing a newer Try Omarchy app therefore does not apply
 all of that app's factory-image changes to an existing VM, and an in-guest
 update should not be assumed to reproduce them. A confirmed reset is the
 deliberate, destructive way to start again from the newest bundled factory.
+
+### Updating integrations in an existing VM
+
+The Mac launcher’s **VM integrations → Review…** action explains how to add
+new Try Omarchy features to an existing VM. It offers a one-time setup command
+for guests that do not yet have the integration manager. Run that command in an
+Omarchy terminal; it mounts the app’s dedicated read-only bundle and opens a
+review before requesting the Linux administrator password. SSH and personal
+folder sharing are not required.
+
+After setup, use **Omarchy Menu → Setup → Try Omarchy Integrations** or run
+`try-omarchy-integrations`. The initial guide installs or updates the sudo Touch ID support already bundled
+with Try Omarchy. Biometric pairing remains a separate explicit choice. It does
+not install pending integrations or upgrade the guest OS.
+
+The app checks integration status after every VM launch. The launcher labels
+cached results **Last check**. A guest that does not respond may need setup or
+repair; a timeout is not proof that its components are absent. See
+[integration updates](docs/integration-updates.md) for scope and recovery details.
+
+### Repairing update holds in an older guest
+
+Older guests may fail Omarchy Update with conflicting `libaquamarine.so`
+dependencies. New factory images hold the compatible Hyprland, aquamarine,
+and Hyprtoolkit packages together, along with the direct-boot kernel and
+headers. Updating the Mac app does not add these holds to an existing guest.
+
+Copy `guest/scripts/repair-update-holds.py` from this source checkout into the
+guest, then run it **inside Omarchy**, with the updater closed:
+
+```sh
+python3 repair-update-holds.py          # preview only
+sudo python3 repair-update-holds.py --apply
+```
+
+The command adds missing holds to both `/usr/share/try-omarchy/pacman.conf`
+and `/etc/pacman.conf`. The first file is essential: Omarchy's pre-refresh
+hook restores it over the second before updating. Existing holds, comments,
+repository definitions, and unrelated settings are retained in each file.
+Keep any custom settings you want to survive an update in the saved share
+copy too; the existing update hook still replaces the active configuration.
+
+The repair prints a backup directory under
+`/var/lib/try-omarchy/update-holds-backup.*`, preserving both original files
+under their relative paths. To undo it, close the updater and restore each
+backup to its original location with `sudo cp -p`. Running the repair again
+makes no changes when the holds are already present. It refuses to write
+while pacman has a transaction lock.
+
+Then retry **Update → Omarchy**. This command only repairs the hold list; it
+does not install, downgrade, or upgrade packages, and cannot repair packages
+that were already upgraded into an incompatible combination. If dependency
+errors remain, retain the full error output for diagnosis instead of removing
+the kernel or compositor holds.
 
 ### Growing an existing VM disk
 
@@ -499,7 +598,7 @@ brew install pkg-config
 ```
 
 `make doctor` performs the basic preflight. `make runtime` downloads a
-checksum-pinned `arm64_sequoia` dependency set, builds QEMU and patched libslirp for macOS 15.0,
+checksum-pinned dependency set, builds QEMU and patched libslirp for macOS 26.0,
 and rejects any runtime image that raises that minimum or strongly imports an
 API unavailable on the declared platform. Installed Homebrew library versions
 are never copied into the app.
