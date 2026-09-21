@@ -23,6 +23,15 @@ assert_line_pair() {
     "$file" || fail "expected adjacent lines [$first] and [$second] in $file"
 }
 
+assert_keyboard_lockstep() {
+  local log=$1
+  local geometry=$2
+  [[ $(grep -o "tryomarchy.keyboard=$geometry" "$log" | wc -l | tr -d ' ') == 1 ]] || \
+    fail "expected exactly one tryomarchy.keyboard=$geometry token in $log"
+  [[ $(grep -c "^TRYOMARCHY_KEYBOARD=$geometry$" "$log") == 1 ]] || \
+    fail "Cocoa env must match cmdline token $geometry in $log"
+}
+
 test_root=$(mktemp -d '/private/tmp/omarchy-qemu-memory-contract.XXXXXX')
 case "$test_root" in
   /private/tmp/omarchy-qemu-memory-contract.??????) ;;
@@ -41,15 +50,39 @@ mkdir -p \
   "$resources/scripts" \
   "$shim_dir"
 
-/bin/cp "$macos_dir/run-qemu-gpu.sh" "$resources/scripts/run-qemu-gpu.sh"
+# The copied launcher must never reap another app's live run directories.
+# Keep the unique prefix directly in /private/tmp for short Unix socket paths.
+sed "s|/private/tmp/omarchy-qemu-gpu\\.|/private/tmp/${test_root##*/}-run.|g" \
+  "$macos_dir/run-qemu-gpu.sh" >"$resources/scripts/run-qemu-gpu.sh"
+if grep -Fq '/private/tmp/omarchy-qemu-gpu.' "$resources/scripts/run-qemu-gpu.sh"; then
+  fail "test launcher still refers to production run directories"
+fi
 /bin/cp "$macos_dir/qemu-port-forwarding.sh" "$resources/scripts/qemu-port-forwarding.sh"
 /bin/cp "$macos_dir/qemu-networking.sh" "$resources/scripts/qemu-networking.sh"
 chmod 755 "$resources/scripts/run-qemu-gpu.sh"
 chmod 644 "$resources/scripts/qemu-port-forwarding.sh"
 
+mkdir -p "$resources/guest-settings"
+cp "$macos_dir/guest-settings.service" "$resources/guest-settings/guest-settings.service"
+cp "$macos_dir/../guest/scripts/install-settings-integration.py" "$resources/guest-settings/install.py"
+
 cat >"$contents/MacOS/omarchy-vm-helper" <<'SH'
 #!/bin/bash
 set -euo pipefail
+if [[ ${1:-} == --wait-for-qmp ]]; then
+  if [[ -n ${REAL_QMP_HELPER:-} ]]; then
+    exec "$REAL_QMP_HELPER" "$@"
+  fi
+  exit "${FAKE_QMP_READY_STATUS:-0}"
+fi
+if [[ ${1:-} == --host-keyboard-geometry ]]; then
+  if [[ -n ${FAKE_HOST_KEYBOARD_FAIL:-} ]]; then
+    printf 'cannot detect host keyboard geometry\n' >&2
+    exit 1
+  fi
+  printf '%s\n' "${FAKE_HOST_KEYBOARD:-iso}"
+  exit 0
+fi
 if [[ ${1:-} == --bridge-native-audio \
    || ${1:-} == --bridge-native-authentication \
    || ${1:-} == --bridge-native-clipboard \
@@ -100,14 +133,24 @@ case " $* " in
     ;;
   *)
     exec /usr/bin/python3 - "$@" <<'PY'
+import json
 import os
 from pathlib import Path
 import socket
 import sys
+import threading
 import time
 
 arguments = sys.argv[1:]
-Path(os.environ["FAKE_QEMU_LOG"]).write_text("\n".join(arguments) + "\n")
+geometry = os.environ.get("TRYOMARCHY_KEYBOARD", "")
+Path(os.environ["FAKE_QEMU_LOG"]).write_text(
+    "\n".join(arguments) + f"\nTRYOMARCHY_KEYBOARD={geometry}\n"
+)
+qmp_paths = {
+    arguments[index + 1][5:].split(",", 1)[0]
+    for index, argument in enumerate(arguments[:-1])
+    if argument == "-qmp" and arguments[index + 1].startswith("unix:")
+}
 socket_paths = []
 for argument in arguments:
     if argument.startswith("unix:"):
@@ -128,6 +171,26 @@ if os.environ.get("FAKE_QEMU_SKIP_SOCKETS") != "1":
         server.bind(path)
         server.listen(1)
         servers.append(server)
+        # Like QEMU, answer the QMP monitor with a greeting; the launcher
+        # waits for that before declaring the VM ready.
+        if path in qmp_paths:
+            def greet(server=server):
+                while True:
+                    try:
+                        client, _ = server.accept()
+                    except OSError:
+                        return
+                    try:
+                        client.settimeout(1)
+                        client.sendall(b'{"QMP": {"version": {}, "capabilities": []}}\r\n')
+                        with client.makefile("rb") as stream:
+                            request = json.loads(stream.readline())
+                        assert request["execute"] == "qmp_capabilities"
+                        client.sendall(json.dumps({"return": {}, "id": request["id"]}).encode() + b"\r\n")
+                    except (OSError, ValueError):
+                        pass
+                    client.close()
+            threading.Thread(target=greet, daemon=True).start()
 
 time.sleep(float(os.environ.get("FAKE_QEMU_LIFETIME", "0.20")))
 for server in servers:
@@ -315,6 +378,7 @@ run_scenario() {
 run_scenario default 0
 assert_line_pair "$test_root/default/qemu.log" -m 8192M
 assert_contains "$(<"$test_root/default/stderr")" '8 GiB RAM'
+assert_keyboard_lockstep "$test_root/default/qemu.log" iso
 
 run_scenario below-default-threshold 0 FAKE_HOST_MEMSIZE=17178820608
 assert_line_pair "$test_root/below-default-threshold/qemu.log" -m 4096M

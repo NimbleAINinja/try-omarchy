@@ -16,7 +16,7 @@ nothing.
 
 ## Protocol
 
-A fifth virtio-serial port, `dev.tryomarchy.battery`, carries
+A dedicated virtio-serial port, `dev.tryomarchy.battery` (`nr=7`), carries
 newline-delimited JSON. There is one message type — a complete snapshot every
 time, never a delta — so a restarted or late-joining agent is never
 half-informed:
