@@ -202,6 +202,7 @@ for argument in arguments:
                 socket_paths.append(field[5:])
 
 servers = []
+qmp_ready = threading.Event()
 if os.environ.get("FAKE_QEMU_SKIP_SOCKETS") != "1":
     for path in socket_paths:
         try:
@@ -228,10 +229,14 @@ if os.environ.get("FAKE_QEMU_SKIP_SOCKETS") != "1":
                             request = json.loads(stream.readline())
                         assert request["execute"] == "qmp_capabilities"
                         client.sendall(json.dumps({"return": {}, "id": request["id"]}).encode() + b"\r\n")
+                        qmp_ready.set()
                     except (OSError, ValueError):
                         pass
                     client.close()
             threading.Thread(target=greet, daemon=True).start()
+
+if os.environ.get("FAKE_QEMU_WAIT_FOR_QMP") == "1" and not qmp_ready.wait(10):
+    raise SystemExit("fake QEMU timed out waiting for the readiness handshake")
 
 if os.environ.get("FAKE_QEMU_WAIT_FOR_TERMINATION") == "1":
     # Failure scenarios need QEMU alive until launcher cleanup, regardless of
@@ -586,7 +591,7 @@ chmod 755 "$shim_dir/python3"
 real_helper="$macos_dir/.build/debug/omarchy-vm-helper"
 [[ -x $real_helper ]] || fail 'build the native helper with swift build before running this test'
 run_scenario no-python 0 '' "REAL_QMP_HELPER=$real_helper" \
-  "NO_PYTHON_LOG=$test_root/python.log" FAKE_QEMU_LIFETIME=1
+  "NO_PYTHON_LOG=$test_root/python.log" FAKE_QEMU_WAIT_FOR_QMP=1
 [[ ! -e $test_root/python.log ]] || fail 'release launcher invoked Python'
 assert_contains "$(<"$test_root/no-python/stderr")" '[qemu-gpu] Ready. QMP:'
 /bin/rm -f "$shim_dir/python3"

@@ -7,12 +7,21 @@ import Testing
 struct QMPMonitorReadinessTests {
     @Test("refused connections retry within a bounded deadline")
     func refusedMonitor() {
-        var attempts = 0
-        let start = DispatchTime.now().uptimeNanoseconds
+        var now: UInt64 = 1_000_000_000
+        var timeouts: [Int32] = []
+        var delays: [TimeInterval] = []
         do {
-            try QMPMonitorReadiness.wait(timeoutMilliseconds: 150, isTargetAlive: { true }) { timeout in
-                #expect(timeout > 0 && timeout <= 150)
-                attempts += 1
+            try QMPMonitorReadiness.wait(
+                timeoutMilliseconds: 150,
+                nowNanoseconds: { now },
+                sleep: { delay in
+                    delays.append(delay)
+                    now += UInt64((delay * 1_000_000_000).rounded())
+                },
+                isTargetAlive: { true }
+            ) { timeout in
+                timeouts.append(timeout)
+                now += 20_000_000
                 throw HelperError.io("connection refused")
             }
             Issue.record("An unavailable monitor was declared ready")
@@ -20,8 +29,30 @@ struct QMPMonitorReadinessTests {
             #expect(error.localizedDescription.contains("readiness timed out"))
             #expect(error.localizedDescription.contains("connection refused"))
         }
-        #expect(attempts >= 2)
-        #expect(DispatchTime.now().uptimeNanoseconds - start < 1_000_000_000)
+        #expect(timeouts == [150, 30])
+        #expect(delays == [0.1, 0.01])
+        #expect(now == 1_150_000_000)
+    }
+
+    @Test("a scheduler delay past the deadline does not start another probe")
+    func delayedWakeup() {
+        var now: UInt64 = 0
+        var attempts = 0
+        do {
+            try QMPMonitorReadiness.wait(
+                timeoutMilliseconds: 150,
+                nowNanoseconds: { now },
+                sleep: { _ in now += 1_000_000_000 },
+                isTargetAlive: { true }
+            ) { _ in
+                attempts += 1
+                throw HelperError.io("connection refused")
+            }
+            Issue.record("An unavailable monitor was declared ready")
+        } catch {
+            #expect(error.localizedDescription.contains("readiness timed out"))
+        }
+        #expect(attempts == 1)
     }
 
     @Test("QEMU exit during an attempt stops retries immediately")
@@ -48,24 +79,20 @@ struct QMPMonitorReadinessTests {
         if sendGreeting {
             try QMPConnection.writeJSON(["QMP": ["capabilities": []]], to: sockets[1])
         }
-        var attempted = false
-        let start = DispatchTime.now().uptimeNanoseconds
+        // Exercise real socket timeout/cleanup separately from retry timing.
+        // The policy tests above use a controlled clock, so runner scheduling
+        // cannot consume the budget before this socket has even been tried.
         do {
-            try QMPMonitorReadiness.wait(timeoutMilliseconds: 150, isTargetAlive: { true }) { timeout in
-                guard !attempted else { throw HelperError.io("monitor still unavailable") }
-                attempted = true
-                return try QMPConnection(
-                    connectedDescriptor: sockets[0],
-                    identifierPrefix: "readiness-test",
-                    timeoutMilliseconds: timeout
-                )
-            }
+            let connection = try QMPConnection(
+                connectedDescriptor: sockets[0],
+                identifierPrefix: "readiness-test",
+                timeoutMilliseconds: 150
+            )
+            connection.close()
             Issue.record("A silent monitor was declared ready")
         } catch {
-            #expect(error.localizedDescription.contains("readiness timed out"))
+            #expect(error is HelperError)
         }
-        #expect(attempted)
-        #expect(DispatchTime.now().uptimeNanoseconds - start < 1_000_000_000)
         // Drain any capability request and require EOF: failed attempts must
         // release QEMU's single-client monitor for the next connection.
         var bytes = [UInt8](repeating: 0, count: 4096)

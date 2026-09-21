@@ -20,17 +20,19 @@ enum QMPMonitorReadiness {
 
     static func wait(
         timeoutMilliseconds: Int32 = 60_000,
+        nowNanoseconds: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds },
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
         isTargetAlive: () -> Bool,
         connect: (Int32) throws -> QMPConnection
     ) throws {
-        let deadline = DispatchTime.now().uptimeNanoseconds
+        let deadline = nowNanoseconds()
             + UInt64(max(0, timeoutMilliseconds)) * 1_000_000
         var lastError: Error?
         while true {
             guard isTargetAlive() else {
                 throw HelperError.io("QEMU exited before its QMP monitor became ready")
             }
-            let now = DispatchTime.now().uptimeNanoseconds
+            let now = nowNanoseconds()
             guard now < deadline, (deadline - now) / 1_000_000 > 0 else { break }
             let attemptTimeout = Int32(min(250, (deadline - now) / 1_000_000))
             do {
@@ -45,9 +47,9 @@ enum QMPMonitorReadiness {
             guard isTargetAlive() else {
                 throw HelperError.io("QEMU exited before its QMP monitor became ready")
             }
-            let afterAttempt = DispatchTime.now().uptimeNanoseconds
+            let afterAttempt = nowNanoseconds()
             guard afterAttempt < deadline else { break }
-            Thread.sleep(forTimeInterval: min(0.1, Double(deadline - afterAttempt) / 1_000_000_000))
+            sleep(min(0.1, Double(deadline - afterAttempt) / 1_000_000_000))
         }
         let detail = lastError.map { ": \($0.localizedDescription)" } ?? ""
         throw HelperError.io("QMP monitor readiness timed out\(detail)")
