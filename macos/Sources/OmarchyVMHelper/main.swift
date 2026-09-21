@@ -5,7 +5,7 @@ import Foundation
 private var terminationSignalSources: [DispatchSourceSignal] = []
 
 private func usage() -> Never {
-    fputs("Usage: omarchy-vm-helper --run-qemu [--ephemeral | --reset-storage | --reset-storage-only] [GUEST_DIR] | --bridge-command-super QEMU_PID QMP_SOCKET | --bridge-native-audio QEMU_PID SOCKET ROUTE_DIRECTORY | --bridge-native-authentication QEMU_PID SOCKET | --bridge-native-camera QEMU_PID SOCKET | --bridge-native-clipboard QEMU_PID SOCKET\n", stderr)
+    fputs("Usage: omarchy-vm-helper --run-qemu [--ephemeral | --reset-storage | --reset-storage-only] [GUEST_DIR] | --wait-for-qmp QEMU_PID SOCKET | --bridge-command-super QEMU_PID QMP_SOCKET | --bridge-native-audio QEMU_PID SOCKET ROUTE_DIRECTORY | --bridge-native-authentication QEMU_PID SOCKET | --bridge-native-camera QEMU_PID SOCKET | --bridge-native-clipboard QEMU_PID SOCKET\n", stderr)
     exit(64)
 }
 
@@ -19,6 +19,12 @@ private func effectiveArguments() -> [String] {
 
 let arguments = effectiveArguments()
 do {
+    if arguments.first == "--wait-for-qmp" {
+        guard arguments.count == 3, let pid = Int32(arguments[1]), pid > 1 else { usage() }
+        try QMPMonitorReadiness.wait(targetPID: pid, socketPath: arguments[2])
+        exit(0)
+    }
+
     if arguments.first == "--bridge-network-link" {
         guard arguments.count == 4, let pid = Int32(arguments[1]), pid > 1 else { usage() }
         try NetworkLinkBridge.run(targetPID: pid, qmpSocketPath: arguments[2], statusPath: arguments[3])

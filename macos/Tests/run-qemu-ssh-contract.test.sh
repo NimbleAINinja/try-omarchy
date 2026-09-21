@@ -49,14 +49,22 @@ mkdir -p \
 /bin/cp "$macos_dir/run-qemu-gpu.sh" "$resources/scripts/run-qemu-gpu.sh"
 /bin/cp "$macos_dir/qemu-port-forwarding.sh" "$resources/scripts/qemu-port-forwarding.sh"
 /bin/cp "$macos_dir/qemu-networking.sh" "$resources/scripts/qemu-networking.sh"
-/bin/cp "$macos_dir/qemu-monitor-ready.sh" "$resources/scripts/qemu-monitor-ready.sh"
 chmod 755 "$resources/scripts/run-qemu-gpu.sh"
 chmod 644 "$resources/scripts/qemu-port-forwarding.sh"
-chmod 644 "$resources/scripts/qemu-monitor-ready.sh"
 
 cat >"$contents/MacOS/omarchy-vm-helper" <<'SH'
 #!/bin/bash
 set -euo pipefail
+if [[ ${1:-} == --wait-for-qmp ]]; then
+  if [[ -n ${FAKE_QMP_READY_WAIT:-} ]]; then
+    printf '%s %s %s\n' "$$" "$PPID" "$2" >"$FAKE_QMP_READY_WAIT"
+    while true; do sleep 0.1; done
+  fi
+  if [[ -n ${REAL_QMP_HELPER:-} ]]; then
+    exec "$REAL_QMP_HELPER" "$@"
+  fi
+  exit "${FAKE_QMP_READY_STATUS:-0}"
+fi
 if [[ ${1:-} == --bridge-native-audio && ${FAKE_AUDIO_EARLY_EXIT:-0} == 1 ]]; then
   sleep 0.05
   exit 0
@@ -112,6 +120,7 @@ case " $* " in
     ;;
   *)
     exec /usr/bin/python3 - "$@" <<'PY'
+import json
 import os
 from pathlib import Path
 import socket
@@ -175,8 +184,13 @@ if os.environ.get("FAKE_QEMU_SKIP_SOCKETS") != "1":
                     except OSError:
                         return
                     try:
+                        client.settimeout(1)
                         client.sendall(b'{"QMP": {"version": {}, "capabilities": []}}\r\n')
-                    except OSError:
+                        with client.makefile("rb") as stream:
+                            request = json.loads(stream.readline())
+                        assert request["execute"] == "qmp_capabilities"
+                        client.sendall(json.dumps({"return": {}, "id": request["id"]}).encode() + b"\r\n")
+                    except (OSError, ValueError):
                         pass
                     client.close()
             threading.Thread(target=greet, daemon=True).start()
@@ -498,6 +512,46 @@ assert_contains "$(<"$test_root/disabled/storage.log")" select-existing
 assert_contains "$(<"$test_root/disabled/storage.log")" create
 assert_line_pair "$test_root/disabled/qemu.log" -smp '8,sockets=1,cores=8,threads=1'
 assert_line_pair "$test_root/disabled/qemu.log" -m 8192M
+
+# Release launches must work without a usable host interpreter. The fake
+# QEMU uses an absolute interpreter path only as test infrastructure.
+cat >"$shim_dir/python3" <<'SH'
+#!/bin/bash
+printf 'unexpected runtime Python invocation\n' >>"$NO_PYTHON_LOG"
+exit 127
+SH
+chmod 755 "$shim_dir/python3"
+real_helper="$macos_dir/.build/debug/omarchy-vm-helper"
+[[ -x $real_helper ]] || fail 'build the native helper with swift build before running this test'
+run_scenario no-python 0 '' "REAL_QMP_HELPER=$real_helper" \
+  "NO_PYTHON_LOG=$test_root/python.log" FAKE_QEMU_LIFETIME=1
+[[ ! -e $test_root/python.log ]] || fail 'release launcher invoked Python'
+assert_contains "$(<"$test_root/no-python/stderr")" '[qemu-gpu] Ready. QMP:'
+/bin/rm -f "$shim_dir/python3"
+
+run_scenario monitor-failure 1 '' FAKE_QMP_READY_STATUS=1 FAKE_QEMU_LIFETIME=10
+assert_contains "$(<"$test_root/monitor-failure/stderr")" "QEMU's QMP monitor did not become ready"
+assert_not_contains "$(<"$test_root/monitor-failure/stderr")" '[qemu-gpu] Ready. QMP:'
+
+# Cancelling a launch while the monitor is initializing must reap both the
+# readiness helper and QEMU rather than wait for the 60-second deadline.
+run_scenario monitor-cancel 143 '' FAKE_QEMU_LIFETIME=10 \
+  "FAKE_QMP_READY_WAIT=$test_root/readiness-pids" &
+cancel_scenario_pid=$!
+for ((attempt=0; attempt<100; attempt++)); do
+  [[ -s $test_root/readiness-pids ]] && break
+  sleep 0.05
+done
+[[ -s $test_root/readiness-pids ]] || fail 'readiness helper did not start for cancellation test'
+read -r readiness_pid launcher_pid target_pid <"$test_root/readiness-pids"
+kill -TERM "$launcher_pid"
+wait "$cancel_scenario_pid" || fail 'cancelling monitor readiness did not stop the launcher'
+for stopped_pid in "$readiness_pid" "$target_pid"; do
+  if kill -0 "$stopped_pid" 2>/dev/null; then
+    fail "cancelling readiness left child $stopped_pid running"
+  fi
+done
+assert_not_contains "$(<"$test_root/monitor-cancel/stderr")" '[qemu-gpu] Ready. QMP:'
 
 # Exercise resource values through the real launcher and its QEMU boundary.
 run_scenario resources 0 '' FAKE_HOST_CPUS=18 \

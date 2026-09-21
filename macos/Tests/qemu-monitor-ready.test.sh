@@ -1,110 +1,116 @@
 #!/bin/bash
 
-# The launcher's "Ready. QMP:" line is a contract: the helper connects to that
-# socket and tears the VM down if the monitor does not answer. QEMU creates the
-# socket file early in its initialisation but only accepts connections once its
-# main loop runs, with a listen backlog of one, so a client that connects too
-# early and gives up leaves every later connect refused until the loop starts.
-# Ready must therefore mean "the monitor answered", not "the file exists".
-
+# Exercise the shipped command against QEMU-like Unix sockets, including a
+# full listen backlog during initialization. Python is test infrastructure;
+# the helper itself runs with an unusable Python on PATH.
 set -euo pipefail
+macos_dir=$(cd "$(dirname "$0")/.." && pwd -P)
+helper="$macos_dir/.build/debug/omarchy-vm-helper"
+[[ -x $helper ]] || { echo 'Build the native helper with swift build first' >&2; exit 1; }
+scratch=$(mktemp -d '/private/tmp/qmp-ready.XXXXXX')
+trap 'rm -rf "$scratch"' EXIT
 
-test_dir=$(cd "$(dirname "$0")" && pwd -P)
-macos_dir=$(cd "$test_dir/.." && pwd -P)
-library="$macos_dir/qemu-monitor-ready.sh"
-launcher="$macos_dir/run-qemu-gpu.sh"
+python3 - "$helper" "$scratch" <<'PY'
+import contextlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
 
-fail() {
-  printf 'qemu-monitor-ready.test: %s\n' "$*" >&2
-  exit 1
-}
+helper, scratch = sys.argv[1], Path(sys.argv[2])
+# Match the launcher's standardized public /tmp pathname; Foundation strips
+# the /private prefix, and QMPConnection rejects nonstandard socket paths.
+scratch = Path("/tmp") / scratch.name
+python_log = scratch / "python.log"
+python_shim = scratch / "python3"
+python_shim.write_text(f'#!/bin/bash\nprintf unexpected > "{python_log}"\nexit 127\n')
+python_shim.chmod(0o755)
+environment = dict(os.environ, PATH=str(scratch))
 
-[[ -f $library ]] || fail "missing library: $library"
-# shellcheck source=../qemu-monitor-ready.sh
-source "$library"
-declare -F qemu_wait_for_qmp_monitor >/dev/null || \
-  fail 'library must define qemu_wait_for_qmp_monitor'
-
-scratch=$(mktemp -d "${TMPDIR:-/tmp}/qemu-monitor-ready.XXXXXX")
-cleanup() {
-  [[ -z ${server_pid:-} ]] || kill "$server_pid" 2>/dev/null || true
-  [[ -z ${sleeper_pid:-} ]] || kill "$sleeper_pid" 2>/dev/null || true
-  rm -rf "$scratch"
-}
-trap cleanup EXIT
-
-# A stand-in for QEMU: binds and listens (backlog 1) immediately, like the
-# chardev does during init, but only starts accepting after ACCEPT_DELAY
-# seconds, like the main loop. Each accepted client gets a QMP greeting.
-fake_qemu() {
-  python3 - "$1" "$2" <<'PY' &
-import socket, sys, time
-path, delay = sys.argv[1], float(sys.argv[2])
+server_code = r'''
+import json, os, socket, sys, threading, time
+path, delay, mode, log = sys.argv[1:]
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(path)
 server.listen(1)
-time.sleep(delay)
+if mode == "exit":
+    threading.Timer(0.3, lambda: os._exit(0)).start()
+time.sleep(float(delay))
+rejected = False
 while True:
     client, _ = server.accept()
-    # A probe that gave up during the delay is still queued here; like QEMU,
-    # shrug off the peer having gone away.
+    with client:
+        client.settimeout(2)
+        try:
+            if mode == "exit":
+                time.sleep(2)
+                continue
+            # Split the greeting across writes to exercise stream parsing.
+            client.sendall(b'{"Q')
+            time.sleep(0.01)
+            client.sendall(b'MP": {"version": {}, "capabilities": []}}\r\n')
+            with client.makefile("rb") as stream:
+                request = json.loads(stream.readline())
+            assert request["execute"] == "qmp_capabilities"
+            if mode == "retry" and not rejected:
+                rejected = True
+                response = {"error": {"desc": "initializing"}, "id": request["id"]}
+            else:
+                response = {"return": {}, "id": request["id"]}
+            # QMP may interleave events with command responses.
+            client.sendall(b'{"event": "RESUME"}\r\n')
+            client.sendall(json.dumps(response).encode() + b"\r\n")
+            assert client.recv(1) == b"", "readiness probe did not close"
+            if "return" in response:
+                with open(log, "a") as output:
+                    output.write("negotiated and closed\n")
+        except (OSError, ValueError):
+            # Probes queued during init can have timed out before accept().
+            pass
+'''
+
+@contextlib.contextmanager
+def monitor(name, delay=0, mode="ready"):
+    path = scratch / (name + ".sock")
+    log = scratch / (name + ".log")
+    process = subprocess.Popen([sys.executable, "-c", server_code, str(path), str(delay), mode, str(log)])
     try:
-        client.sendall(b'{"QMP": {"version": {}, "capabilities": []}}\r\n')
-    except OSError:
-        pass
-    client.close()
+        deadline = time.monotonic() + 3
+        while not path.is_socket():
+            assert process.poll() is None, "monitor exited before binding"
+            assert time.monotonic() < deadline, "monitor did not bind"
+            time.sleep(0.01)
+        yield process, path, log
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=3)
+
+for name, delay, mode in [("slow", 0.8, "ready"), ("fast", 0, "ready"), ("retry", 0, "retry")]:
+    with monitor(name, delay, mode) as (process, path, log):
+        start = time.monotonic()
+        result = subprocess.run([helper, "--wait-for-qmp", str(process.pid), str(path)],
+                                env=environment, capture_output=True, text=True, timeout=5)
+        elapsed = time.monotonic() - start
+        assert result.returncode == 0, (name, result.stderr)
+        if name == "slow":
+            assert elapsed >= 0.6, "Ready preceded the monitor handshake"
+        if name == "fast":
+            assert elapsed < 2, "Ready delayed an immediately responsive monitor"
+        deadline = time.monotonic() + 1
+        while not log.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert log.exists(), "probe did not negotiate capabilities and release its connection"
+
+with monitor("exit", mode="exit") as (process, path, _):
+    start = time.monotonic()
+    result = subprocess.run([helper, "--wait-for-qmp", str(process.pid), str(path)],
+                            env=environment, capture_output=True, text=True, timeout=3)
+    assert result.returncode == 1, result
+    assert "QEMU exited" in result.stderr, result.stderr
+    assert time.monotonic() - start < 2, "QEMU exit did not fail promptly"
+
+assert not python_log.exists(), "native readiness command invoked Python"
+print("qemu-monitor-ready.test: PASS")
 PY
-  server_pid=$!
-}
-
-# Something with a live pid to stand in for the QEMU process.
-sleep 300 &
-sleeper_pid=$!
-
-# 1. Slow init: the monitor answers only after 1.5 s. Ready must wait for it.
-socket_path="$scratch/slow.sock"
-fake_qemu "$socket_path" 1.5
-until [[ -S $socket_path ]]; do sleep 0.02; done
-start=$(python3 -c 'import time; print(time.monotonic())')
-qemu_wait_for_qmp_monitor "$socket_path" "$sleeper_pid" || \
-  fail 'a monitor that answers after a slow init must count as ready'
-elapsed=$(python3 -c "import time; print(time.monotonic() - $start)")
-python3 -c "import sys; sys.exit(0 if $elapsed >= 1.4 else 1)" || \
-  fail "ready was declared after ${elapsed}s, before the monitor could answer"
-kill "$server_pid"; wait "$server_pid" 2>/dev/null || true; unset server_pid
-
-# 2. Fast init: an immediately answering monitor must not be held up.
-socket_path="$scratch/fast.sock"
-fake_qemu "$socket_path" 0
-until [[ -S $socket_path ]]; do sleep 0.02; done
-start=$(python3 -c 'import time; print(time.monotonic())')
-qemu_wait_for_qmp_monitor "$socket_path" "$sleeper_pid" || \
-  fail 'an answering monitor must count as ready'
-elapsed=$(python3 -c "import time; print(time.monotonic() - $start)")
-python3 -c "import sys; sys.exit(0 if $elapsed < 1.0 else 1)" || \
-  fail "an answering monitor took ${elapsed}s to be declared ready"
-kill "$server_pid"; wait "$server_pid" 2>/dev/null || true; unset server_pid
-
-# 3. QEMU gone: a socket file with no process behind it must fail promptly
-#    rather than wait out the whole deadline.
-socket_path="$scratch/dead.sock"
-python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$socket_path"
-kill "$sleeper_pid"; wait "$sleeper_pid" 2>/dev/null || true
-dead_pid=$sleeper_pid; unset sleeper_pid
-start=$(python3 -c 'import time; print(time.monotonic())')
-if qemu_wait_for_qmp_monitor "$socket_path" "$dead_pid" 2>/dev/null; then
-  fail 'a monitor whose QEMU has exited must not count as ready'
-fi
-elapsed=$(python3 -c "import time; print(time.monotonic() - $start)")
-python3 -c "import sys; sys.exit(0 if $elapsed < 3.0 else 1)" || \
-  fail "a dead QEMU took ${elapsed}s to be reported"
-
-# 4. The launcher must consult the monitor before announcing Ready.
-wait_line=$(grep -n 'qemu_wait_for_qmp_monitor "$qmp_socket" "$qemu_pid"' "$launcher" | cut -d: -f1 | head -1)
-ready_line=$(grep -n '^echo "\[qemu-gpu\] Ready. QMP: \$qmp_socket" >&2$' "$launcher" | cut -d: -f1 | head -1)
-[[ -n $wait_line && -n $ready_line ]] || \
-  fail 'launcher must wait for the QMP monitor and print the Ready line'
-(( wait_line < ready_line )) || \
-  fail 'launcher must wait for the QMP monitor before printing Ready'
-
-echo 'qemu-monitor-ready.test: PASS'
