@@ -62,6 +62,7 @@ immersive_patch="$native_dir/patches/qemu-cocoa-immersive-mode.patch"
 full_grab_patch="$native_dir/patches/qemu-cocoa-full-grab-focus.patch"
 reenable_patch="$native_dir/patches/qemu-cocoa-full-grab-reenable.patch"
 host_keys_patch="$native_dir/patches/qemu-cocoa-host-keys.patch"
+media_keys_patch="$native_dir/patches/qemu-cocoa-media-keys.patch"
 pause_ownership_patch="$native_dir/patches/qemu-cocoa-pause-ownership.patch"
 pinch_patch="$native_dir/patches/qemu-cocoa-pinch-zoom.patch"
 precise_scroll_patch="$native_dir/patches/qemu-cocoa-precise-scroll.patch"
@@ -102,6 +103,7 @@ immersive_patch_sha256=2462463932f7db0d659f754f7f9c182884564dbcd7d4b8e523f1b57f0
 full_grab_patch_sha256=4da9a9fd3017b2a9abcdacd449ad6907fd1cd415328598f3a35b895b15b0b072
 reenable_patch_sha256=e331f329afd45d61b130037119bd4099e0f618b42313f0f712ca40ab251b3de7
 host_keys_patch_sha256=dd395c5822ae7248bc6f9bd968ee75e4d0934adcf67fda36fba3110f4ca449fe
+media_keys_patch_sha256=802fd9a8063723e2446ddcd11cbb767b7fe40cebad3ed274577d18ff9624aa61
 pause_ownership_patch_sha256=1a5729b36eb3e437395d41883a10c3c652df71d289d5df84d95aebd49c78a8f0
 pinch_patch_sha256=37acb8895dddd35fc66812d0c49ec5fc697f9127e9e12ed2e60d17999bf32aee
 precise_scroll_patch_sha256=54252b3b19358aa7e2c75d5f50775a7f488ef2d8b4db8723ba4768b56316a78f
@@ -234,6 +236,8 @@ macos_major=$(sw_vers -productVersion | awk -F. '{ print $1 }')
   die "missing Cocoa full-grab re-enable patch: $reenable_patch"
 [[ -f $host_keys_patch && ! -L $host_keys_patch ]] || \
   die "missing Cocoa host-keys patch: $host_keys_patch"
+[[ -f $media_keys_patch && ! -L $media_keys_patch ]] || \
+  die "missing Cocoa media-keys patch: $media_keys_patch"
 [[ -f $pause_ownership_patch && ! -L $pause_ownership_patch ]] || \
   die "missing Cocoa pause-ownership patch: $pause_ownership_patch"
 [[ -f $pinch_patch && ! -L $pinch_patch ]] || \
@@ -476,6 +480,8 @@ verify_file_sha "Try Omarchy Cocoa full-grab re-enable patch" \
   "$reenable_patch" "$reenable_patch_sha256"
 verify_file_sha "Try Omarchy Cocoa host-keys patch" \
   "$host_keys_patch" "$host_keys_patch_sha256"
+verify_file_sha "Try Omarchy Cocoa media-keys patch" \
+  "$media_keys_patch" "$media_keys_patch_sha256"
 verify_file_sha "Try Omarchy Cocoa pause-ownership patch" \
   "$pause_ownership_patch" "$pause_ownership_patch_sha256"
 verify_file_sha "Try Omarchy Cocoa pinch-zoom patch" \
@@ -522,6 +528,7 @@ patch -d "$source_dir" -p1 -f -i "$immersive_patch"
 patch -d "$source_dir" -p1 -f -i "$full_grab_patch"
 patch -d "$source_dir" -p1 -f -i "$reenable_patch"
 patch -d "$source_dir" -p1 -f -i "$host_keys_patch"
+patch -d "$source_dir" -p1 -f -i "$media_keys_patch"
 patch -d "$source_dir" -p1 -f -i "$pause_ownership_patch"
 verify_file_sha "Try Omarchy HDA full-ring recovery patch" \
   "$audio_recovery_patch" "$audio_recovery_patch_sha256"
