@@ -99,6 +99,21 @@ struct FullscreenNativeContractTests {
         #expect(fullGrab.lowerBound < reenable.lowerBound)
     }
 
+    @Test("Runtime build applies the host-keys pass-through after the tap recovery")
+    func hostKeysAreBuilt() throws {
+        let builder = try source(named: "build-qemu-gpu-runtime.sh")
+        #expect(builder.contains(
+            "host_keys_patch=\"$native_dir/patches/qemu-cocoa-host-keys.patch\""
+        ))
+        let reenable = try #require(
+            builder.range(of: "patch -d \"$source_dir\" -p1 -f -i \"$reenable_patch\"")
+        )
+        let hostKeys = try #require(
+            builder.range(of: "patch -d \"$source_dir\" -p1 -f -i \"$host_keys_patch\"")
+        )
+        #expect(reenable.lowerBound < hostKeys.lowerBound)
+    }
+
     private func source(named relativePath: String) throws -> String {
         let testFile = URL(fileURLWithPath: #filePath)
         let macosDirectory = testFile
