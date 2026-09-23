@@ -114,6 +114,21 @@ struct FullscreenNativeContractTests {
         #expect(reenable.lowerBound < hostKeys.lowerBound)
     }
 
+    @Test("Runtime build applies the media-keys patch after host-keys")
+    func mediaKeysAreBuilt() throws {
+        let builder = try source(named: "build-qemu-gpu-runtime.sh")
+        #expect(builder.contains(
+            "media_keys_patch=\"$native_dir/patches/qemu-cocoa-media-keys.patch\""
+        ))
+        let hostKeys = try #require(
+            builder.range(of: "patch -d \"$source_dir\" -p1 -f -i \"$host_keys_patch\"")
+        )
+        let mediaKeys = try #require(
+            builder.range(of: "patch -d \"$source_dir\" -p1 -f -i \"$media_keys_patch\"")
+        )
+        #expect(hostKeys.lowerBound < mediaKeys.lowerBound)
+    }
+
     private func source(named relativePath: String) throws -> String {
         let testFile = URL(fileURLWithPath: #filePath)
         let macosDirectory = testFile
