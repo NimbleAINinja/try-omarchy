@@ -15,6 +15,9 @@ struct FullscreenNativeContractTests {
             "full-screen=$cocoa_full_screen,full-grab=on,immersive=$cocoa_immersive,swap-opt-cmd=off"
         ))
         #expect(!runner.contains("cocoa_full_grab"))
+        #expect(runner.contains("host_keys=${OMARCHY_QEMU_GPU_HOST_KEYS-131,144,145,160}"))
+        #expect(runner.contains("grep -Fq 'host-keys=code'"))
+        #expect(runner.contains("swap-opt-cmd=off$cocoa_host_keys\""))
     }
 
     @Test("Cocoa separates fullscreen presentation from focused keyboard capture")
