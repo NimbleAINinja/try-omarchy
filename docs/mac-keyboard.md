@@ -47,6 +47,20 @@ window-key state and capture decisions, without recording key contents.
 it observes the capture decision without forwarding or suppressing the event.
 These variables apply to the QEMU process and are unset during normal use.
 
+## Dedicated keys
+
+In its default mode an Apple keyboard sends brightness (144, 145), Mission
+Control (160) and Spotlight (131) as plain key events with their own
+keycodes, not as F-keys. Full grab would swallow them, so the launcher
+passes the ones the Keyboard setting leaves with macOS to QEMU as
+`-display cocoa,host-keys=131:144:145:160`, and the Cocoa tap hands those
+straight back to macOS. The setting is stored under
+`keyboardRoutingPreferences` and published as `OMARCHY_QEMU_GPU_HOST_KEYS`
+(comma-separated; unset means the defaults, empty means none). With "Use
+F1, F2, etc. as standard function keys" on, the same caps arrive as F-keys
+and always reach Omarchy. Volume and media keys are a different event type
+the tap never captures.
+
 ## Validation
 
 `make test` checksums the Cocoa patch and compiles the ISO swap helper. The upstream QEMU pin is unchanged. Review
