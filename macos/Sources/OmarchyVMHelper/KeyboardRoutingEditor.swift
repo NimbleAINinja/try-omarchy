@@ -62,7 +62,7 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
 
         let title = label("Keyboard", size: 22, weight: .bold)
         let explanation = label(
-            "Choose which side gets the Mac's dedicated keys while Omarchy is focused. Brightness, Mission Control and Spotlight changes apply on the next launch.",
+            "Choose which side gets the Mac's dedicated keys while Omarchy is focused. Changes apply on the next launch.",
             size: 11, muted: true
         )
         let heading = NSStackView(views: [title, explanation])
@@ -96,7 +96,7 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
                 detail: "The F6 key on built-in Mac keyboards",
                 control: doNotDisturbPopup
             ),
-            routeRow(title: "Media", detail: "Previous, play/pause, next (F7–F9). Only while Omarchy is focused; applies immediately.", control: mediaPopup),
+            routeRow(title: "Media", detail: "Previous, play/pause, next (F7–F9). Only while Omarchy is focused.", control: mediaPopup),
         ]
         var stacked: [NSView] = []
         for (index, row) in rowViews.enumerated() {

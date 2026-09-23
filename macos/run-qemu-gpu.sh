@@ -377,6 +377,17 @@ if [[ -n $host_keys ]]; then
   cocoa_host_keys=",host-keys=${host_keys//,/:}"
 fi
 
+# Media transport keys go to Omarchy only when the Keyboard setting says so.
+case ${OMARCHY_QEMU_GPU_MEDIA_KEYS:-0} in
+  0) cocoa_media_keys="" ;;
+  1) cocoa_media_keys=",media-keys=on" ;;
+  *) fail "OMARCHY_QEMU_GPU_MEDIA_KEYS must be 0 or 1" ;;
+esac
+if [[ -n $cocoa_media_keys ]]; then
+  LC_ALL=C grep -aFq 'media-keys=on|off' "$qemu_bin" ||
+    fail "the bundled QEMU cannot send the Mac's media keys to Omarchy; run make runtime"
+fi
+
 open_storage
 if [[ $storage_mode == reset ]]; then
   reset_vm
@@ -619,7 +630,7 @@ qemu_args=(
   -drive "if=none,id=omarchy-root,file=${working_disk//,/,,},format=raw,media=disk,cache=writeback"
   -device 'virtio-blk-pci,drive=omarchy-root,serial=omarchy-root,bootindex=0'
   -device 'virtio-gpu-gl-pci,max_outputs=1,xres=1920,yres=1080,romfile='
-  -display "cocoa,gl=on,show-cursor=on,zoom-to-fit=on,full-screen=$full_screen,full-grab=on,immersive=$immersive,swap-opt-cmd=off$cocoa_host_keys"
+  -display "cocoa,gl=on,show-cursor=on,zoom-to-fit=on,full-screen=$full_screen,full-grab=on,immersive=$immersive,swap-opt-cmd=off$cocoa_host_keys$cocoa_media_keys"
   -device 'virtio-keyboard-pci,romfile='
   -device 'virtio-tablet-pci,romfile='
   -device 'virtio-pinch-pci,romfile='

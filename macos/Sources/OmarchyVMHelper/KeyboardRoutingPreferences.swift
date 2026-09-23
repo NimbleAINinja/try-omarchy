@@ -91,6 +91,7 @@ struct KeyboardRoutingPreferenceStore {
 
 struct KeyboardRoutingLaunchConfiguration: Equatable {
     static let hostKeysEnvironmentKey = "OMARCHY_QEMU_GPU_HOST_KEYS"
+    static let mediaKeysEnvironmentKey = "OMARCHY_QEMU_GPU_MEDIA_KEYS"
 
     let environment: [String: String]
 
@@ -102,6 +103,7 @@ struct KeyboardRoutingLaunchConfiguration: Equatable {
         environment[hostKeysEnvironmentKey] = preferences.hostKeycodes
             .map(String.init)
             .joined(separator: ",")
+        environment[mediaKeysEnvironmentKey] = preferences.media == .omarchy ? "1" : "0"
         return Self(environment: environment)
     }
 }

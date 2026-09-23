@@ -50,6 +50,10 @@ struct StartMenuKeyboardTests {
         defer { menu.dismiss() }
         menu.prepareForPresentation(visibleFrame: nil)
         let content = try #require(menu.window.contentView)
+        let status = try #require(
+            descendant(withIdentifier: "permission-status-keyboard", in: content) as? NSTextField
+        )
+        #expect(status.stringValue.contains("Default"))
         let configure = try #require(
             descendant(withIdentifier: "permission-action-keyboard", in: content) as? NSButton
         )

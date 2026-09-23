@@ -145,4 +145,16 @@ struct KeyboardRoutingLaunchConfigurationTests {
         )
         #expect(none.environment[KeyboardRoutingLaunchConfiguration.hostKeysEnvironmentKey] == "")
     }
+
+    @Test("Publishes the media-key choice and replaces inherited values")
+    func publishesMediaKeys() {
+        let inherited = [KeyboardRoutingLaunchConfiguration.mediaKeysEnvironmentKey: "9"]
+        let defaults = KeyboardRoutingLaunchConfiguration.make(baseEnvironment: inherited, preferences: .defaults)
+        #expect(defaults.environment[KeyboardRoutingLaunchConfiguration.mediaKeysEnvironmentKey] == "0")
+        var omarchy = KeyboardRoutingPreferences.defaults
+        omarchy.media = .omarchy
+        let sent = KeyboardRoutingLaunchConfiguration.make(baseEnvironment: inherited, preferences: omarchy)
+        #expect(sent.environment[KeyboardRoutingLaunchConfiguration.mediaKeysEnvironmentKey] == "1")
+        #expect(sent.environment[KeyboardRoutingLaunchConfiguration.hostKeysEnvironmentKey] == "131,144,145,160,176,177,178")
+    }
 }
