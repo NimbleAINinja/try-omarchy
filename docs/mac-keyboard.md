@@ -73,6 +73,17 @@ F1, F2, etc. as standard function keys" on, the same caps arrive as F-keys
 and always reach Omarchy. Volume and media keys are a different event type
 the tap never captures.
 
+Media transport keys arrive as `NX_SYSDEFINED` aux-control events, which
+full grab's tap does not capture by default. When the Keyboard setting
+sends them to Omarchy, the launcher publishes `OMARCHY_QEMU_GPU_MEDIA_KEYS=1`
+and passes `media-keys=on` to QEMU, whose tap then also takes previous,
+play/pause and next while the guest has the keyboard and sends them as
+`audioprev`, `audioplay` and `audionext`; Omarchy's Hyprland bindings pass
+them to `omarchy-shell media`. QEMU's held-key release lifts a media key
+held when focus leaves. Volume, mute, brightness and backlight events
+always pass through. Like the other rows, the setting applies on the next
+launch.
+
 ## Validation
 
 `make test` checksums the Cocoa patch, compiles the ISO swap helper, and
