@@ -162,7 +162,8 @@ case " $* " in
       '-action reboot=reset|shutdown' \
       'full-grab=on|off' \
       'immersive=on|off' \
-      '[,host-keys=code:code...]'
+      '[,host-keys=code:code...]' \
+      'media-keys=on|off'
     if [[ ${FAKE_QEMU_MISSING_SHUTDOWN:-0} != 1 ]]; then
       printf '%s\n' '-action shutdown=poweroff|pause'
     fi
@@ -928,6 +929,14 @@ for invalid_host_keys in 256 abc 1,,2 ,144 144, 1:2 -1 1234; do
     'OMARCHY_QEMU_GPU_HOST_KEYS must be comma-separated keycodes from 0 to 255'
   [[ ! -e $test_root/$scenario/qemu.log ]] || fail 'malformed host keys started QEMU'
 done
+
+assert_not_contains "$disabled_qemu" media-keys=
+run_scenario media-keys-on 0 '' OMARCHY_QEMU_GPU_MEDIA_KEYS=1
+assert_contains "$(<"$test_root/media-keys-on/qemu.log")" \
+  'swap-opt-cmd=off,host-keys=131:144:145:160:176:177:178,media-keys=on'
+run_scenario media-keys-invalid 1 '' OMARCHY_QEMU_GPU_MEDIA_KEYS=2
+assert_contains "$(<"$test_root/media-keys-invalid/stderr")" 'OMARCHY_QEMU_GPU_MEDIA_KEYS must be 0 or 1'
+[[ ! -e $test_root/media-keys-invalid/qemu.log ]] || fail 'invalid media keys started QEMU'
 
 # The selected disk owns locale support. Unsupported images ignore the hint;
 # legacy every-boot writers are masked, and new images seed only once.

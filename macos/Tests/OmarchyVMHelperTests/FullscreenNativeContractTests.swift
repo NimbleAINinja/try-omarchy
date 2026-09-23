@@ -17,7 +17,9 @@ struct FullscreenNativeContractTests {
         #expect(!runner.contains("cocoa_full_grab"))
         #expect(runner.contains("host_keys=${OMARCHY_QEMU_GPU_HOST_KEYS-131,144,145,160,176,177,178}"))
         #expect(runner.contains("grep -Fq 'host-keys=code'"))
-        #expect(runner.contains("swap-opt-cmd=off$cocoa_host_keys\""))
+        #expect(runner.contains("swap-opt-cmd=off$cocoa_host_keys$cocoa_media_keys\""))
+        #expect(runner.contains("case ${OMARCHY_QEMU_GPU_MEDIA_KEYS:-0} in"))
+        #expect(runner.contains("grep -Fq 'media-keys=on|off'"))
     }
 
     @Test("Cocoa separates fullscreen presentation from focused keyboard capture")

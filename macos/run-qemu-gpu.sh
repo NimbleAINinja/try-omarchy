@@ -132,6 +132,9 @@ grep -Fq 'immersive=on|off' <<<"$qemu_help" || {
 grep -Fq 'host-keys=code' <<<"$qemu_help" || {
   fail "staged QEMU cannot leave the Mac's dedicated keys with macOS"
 }
+grep -Fq 'media-keys=on|off' <<<"$qemu_help" || {
+  fail "staged QEMU cannot send the Mac's media keys to Omarchy"
+}
 qemu_netdevs=$("$qemu_bin" -machine virt -netdev help 2>&1) || {
   fail "cannot inspect staged QEMU network backends"
 }
@@ -1650,6 +1653,13 @@ if [[ -n $host_keys ]]; then
   cocoa_host_keys=",host-keys=${host_keys//,/:}"
 fi
 
+# Media transport keys go to Omarchy only when the Keyboard setting says so.
+case ${OMARCHY_QEMU_GPU_MEDIA_KEYS:-0} in
+  0) cocoa_media_keys="" ;;
+  1) cocoa_media_keys=",media-keys=on" ;;
+  *) fail "OMARCHY_QEMU_GPU_MEDIA_KEYS must be 0 or 1" ;;
+esac
+
 # systemd's boot credential creates one temporary service without replacing
 # the guest's default target or requiring an agent to already be installed.
 settings_payload="$resources_dir/guest-settings"
@@ -1780,7 +1790,7 @@ qemu_args=(
   # Full grab keeps every Command chord with the focused guest in either
   # presentation mode. Immersive launches Full Screen and hard-hides the Mac
   # menu bar and Dock; otherwise Cocoa opens a centered, resizable window.
-  -display "cocoa,gl=on,show-cursor=on,zoom-to-fit=on,full-screen=$cocoa_full_screen,full-grab=on,immersive=$cocoa_immersive,swap-opt-cmd=off$cocoa_host_keys"
+  -display "cocoa,gl=on,show-cursor=on,zoom-to-fit=on,full-screen=$cocoa_full_screen,full-grab=on,immersive=$cocoa_immersive,swap-opt-cmd=off$cocoa_host_keys$cocoa_media_keys"
   -device 'virtio-keyboard-pci,romfile='
   -device 'virtio-tablet-pci,romfile='
   -device 'virtio-pinch-pci,romfile='

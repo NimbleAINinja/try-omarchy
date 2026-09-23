@@ -144,7 +144,8 @@ case " $* " in
       '-action shutdown=poweroff|pause' \
       'full-grab=on|off' \
       'immersive=on|off' \
-      '[,host-keys=code:code...]'
+      '[,host-keys=code:code...]' \
+      'media-keys=on|off'
     ;;
   *' -machine virt -netdev help '*) printf '%s\n' user ;;
   *' -machine virt -audiodev help '*) printf '%s\n' sdl ;;
