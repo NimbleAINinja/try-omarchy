@@ -56,6 +56,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     private let portForwardingStore: PortForwardingPreferenceStore
     private let networkStore: VMNetworkPreferenceStore
     private let fullscreenPreferenceStore: FullscreenPreferenceStore
+    private let keyboardRoutingPreferenceStore: KeyboardRoutingPreferenceStore
     private let startupPreferenceStore: StartupPreferenceStore
     private let resourcePreferenceStore: VMResourcePreferenceStore
     private let resourceLimits: VMResourceLimits
@@ -112,6 +113,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         portForwardingStore: PortForwardingPreferenceStore = PortForwardingPreferenceStore(),
         networkStore: VMNetworkPreferenceStore = VMNetworkPreferenceStore(),
         fullscreenPreferenceStore: FullscreenPreferenceStore = FullscreenPreferenceStore(),
+        keyboardRoutingPreferenceStore: KeyboardRoutingPreferenceStore = KeyboardRoutingPreferenceStore(),
         startupPreferenceStore: StartupPreferenceStore = StartupPreferenceStore(),
         resourcePreferenceStore: VMResourcePreferenceStore = VMResourcePreferenceStore(),
         resourceLimits: VMResourceLimits = .current,
@@ -132,6 +134,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         self.portForwardingStore = portForwardingStore
         self.networkStore = networkStore
         self.fullscreenPreferenceStore = fullscreenPreferenceStore
+        self.keyboardRoutingPreferenceStore = keyboardRoutingPreferenceStore
         self.startupPreferenceStore = startupPreferenceStore
         self.resourcePreferenceStore = resourcePreferenceStore
         self.resourceLimits = resourceLimits
@@ -657,8 +660,12 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             baseEnvironment: forwarding.environment,
             preferences: fullscreenPreferenceStore.load()
         )
-        let resources = VMResourceLaunchConfiguration.make(
+        let keyboard = KeyboardRoutingLaunchConfiguration.make(
             baseEnvironment: fullscreen.environment,
+            preferences: keyboardRoutingPreferenceStore.load()
+        )
+        let resources = VMResourceLaunchConfiguration.make(
+            baseEnvironment: keyboard.environment,
             preferences: resolvedResources(),
             limits: resourceLimits
         )
