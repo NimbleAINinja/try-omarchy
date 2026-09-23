@@ -26,12 +26,14 @@ struct KeyboardRoutingEditorTests {
         spotlight.selectItem(withTag: 1)
         dictation.selectItem(withTag: 1)
         doNotDisturb.selectItem(withTag: 1)
+        let media: NSPopUpButton = try control("media", in: editor)
+        media.selectItem(withTag: 1)
         #expect(saved.isEmpty)
         let save: NSButton = try control("save", in: editor)
         save.performClick(nil)
         #expect(saved == [KeyboardRoutingPreferences(
             brightness: .macOS, missionControl: .macOS, spotlight: .omarchy,
-            dictation: .omarchy, doNotDisturb: .omarchy
+            dictation: .omarchy, doNotDisturb: .omarchy, media: .omarchy
         )])
         #expect(closed == 1)
     }

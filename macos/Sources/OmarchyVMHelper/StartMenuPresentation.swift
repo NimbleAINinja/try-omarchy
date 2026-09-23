@@ -302,6 +302,7 @@ enum StartMenuPresentation {
             ("Spotlight", preferences.spotlight),
             ("Dictation", preferences.dictation),
             ("Do Not Disturb", preferences.doNotDisturb),
+            ("Media", preferences.media),
         ]
         let macOS = rows.filter { $0.1 == .macOS }.map(\.0)
         let omarchy = rows.filter { $0.1 == .omarchy }.map(\.0)

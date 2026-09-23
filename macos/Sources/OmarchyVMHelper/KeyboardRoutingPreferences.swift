@@ -12,6 +12,7 @@ struct KeyboardRoutingPreferences: Equatable {
     var spotlight: KeyRoute
     var dictation: KeyRoute = .macOS
     var doNotDisturb: KeyRoute = .macOS
+    var media: KeyRoute = .macOS
 
     static let defaults = Self(brightness: .macOS, missionControl: .macOS, spotlight: .macOS)
 
@@ -58,7 +59,8 @@ struct KeyboardRoutingPreferenceStore {
             missionControl: payload.missionControl,
             spotlight: payload.spotlight,
             dictation: payload.dictation ?? .macOS,
-            doNotDisturb: payload.doNotDisturb ?? .macOS
+            doNotDisturb: payload.doNotDisturb ?? .macOS,
+            media: payload.media ?? .macOS
         )
     }
 
@@ -69,7 +71,8 @@ struct KeyboardRoutingPreferenceStore {
             missionControl: preferences.missionControl,
             spotlight: preferences.spotlight,
             dictation: preferences.dictation,
-            doNotDisturb: preferences.doNotDisturb
+            doNotDisturb: preferences.doNotDisturb,
+            media: preferences.media
         )
         guard let data = try? JSONEncoder().encode(payload) else { return }
         defaults.set(data, forKey: Self.key)
@@ -82,6 +85,7 @@ struct KeyboardRoutingPreferenceStore {
         let spotlight: KeyRoute
         let dictation: KeyRoute?
         let doNotDisturb: KeyRoute?
+        let media: KeyRoute?
     }
 }
 
