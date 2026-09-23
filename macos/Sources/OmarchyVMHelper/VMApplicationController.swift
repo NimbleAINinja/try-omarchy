@@ -334,6 +334,12 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
                     FullscreenPreferences(isImmersive: isImmersive)
                 )
             },
+            keyboardRouting: { [weak self] in
+                self?.keyboardRoutingPreferenceStore.load() ?? .defaults
+            },
+            saveKeyboardRouting: { [weak self] preferences in
+                self?.keyboardRoutingPreferenceStore.save(preferences)
+            },
             startAutomatically: { [weak self] in
                 guard let self else { return false }
                 return self.startupPreferenceStore.load(storageRoot: self.startupPreferenceRoot())
