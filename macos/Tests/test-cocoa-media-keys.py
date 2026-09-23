@@ -83,6 +83,8 @@ int main(void) {{
         self.assertIn("static bool media_keys_enabled;", added)
         self.assertIn("[view isKeyboardCaptured]", added)
         self.assertIn("cocoa_media_key(", added)
+        self.assertIn("qemu_input_map_qcode_to_linux[qcode]", added)
+        self.assertIn("mask |= CGEventMaskBit(14", added)
 
     def test_runtime_applies_it_after_host_keys(self) -> None:
         builder = BUILDER.read_text(encoding="utf-8")
