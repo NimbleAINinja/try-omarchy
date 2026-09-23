@@ -83,6 +83,28 @@ struct KeyboardRoutingPreferenceStoreTests {
         ).hostKeycodes == [144, 145])
     }
 
+    @Test("Media keys default to macOS and an older payload without them still loads")
+    func mediaDefaultsAndMigration() throws {
+        let fixture = DefaultsFixture()
+        #expect(fixture.store.load().media == .macOS)
+
+        let older = try JSONSerialization.data(withJSONObject: [
+            "schemaVersion": KeyboardRoutingPreferenceStore.schemaVersion,
+            "brightness": "macOS", "missionControl": "omarchy", "spotlight": "macOS",
+        ])
+        fixture.defaults.set(older, forKey: KeyboardRoutingPreferenceStore.key)
+        #expect(fixture.store.load() == KeyboardRoutingPreferences(
+            brightness: .macOS, missionControl: .omarchy, spotlight: .macOS, media: .macOS
+        ))
+
+        let choice = KeyboardRoutingPreferences(
+            brightness: .macOS, missionControl: .macOS, spotlight: .macOS, media: .omarchy
+        )
+        fixture.store.save(choice)
+        #expect(fixture.store.load() == choice)
+        #expect(choice.hostKeycodes == KeyboardRoutingPreferences.defaults.hostKeycodes)
+    }
+
     private final class DefaultsFixture {
         let suiteName = "KeyboardRoutingPreferenceStoreTests.\(UUID().uuidString)"
         let defaults: UserDefaults

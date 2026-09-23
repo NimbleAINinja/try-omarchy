@@ -8,15 +8,15 @@ struct StartMenuKeyboardTests {
     @Test("Keyboard detail names which keys stay with macOS")
     func detail() {
         #expect(StartMenuPresentation.keyboardRouting(.defaults)
-            == "Brightness, Mission Control, Spotlight, Dictation, Do Not Disturb stay with macOS.")
+            == "Brightness, Mission Control, Spotlight, Dictation, Do Not Disturb, Media stay with macOS.")
         #expect(StartMenuPresentation.keyboardRouting(KeyboardRoutingPreferences(
             brightness: .omarchy, missionControl: .omarchy, spotlight: .omarchy,
-            dictation: .omarchy, doNotDisturb: .omarchy
-        )) == "Brightness, Mission Control, Spotlight, Dictation, Do Not Disturb go to Omarchy.")
+            dictation: .omarchy, doNotDisturb: .omarchy, media: .omarchy
+        )) == "Brightness, Mission Control, Spotlight, Dictation, Do Not Disturb, Media go to Omarchy.")
         #expect(StartMenuPresentation.keyboardRouting(KeyboardRoutingPreferences(
             brightness: .macOS, missionControl: .omarchy, spotlight: .omarchy,
-            dictation: .omarchy, doNotDisturb: .omarchy
-        )) == "Brightness stays with macOS · Mission Control, Spotlight, Dictation, Do Not Disturb go to Omarchy.")
+            dictation: .omarchy, doNotDisturb: .omarchy, media: .omarchy
+        )) == "Brightness stays with macOS · Mission Control, Spotlight, Dictation, Do Not Disturb, Media go to Omarchy.")
     }
 
     @Test("Configure opens the keyboard sheet and Save stores the choice")
