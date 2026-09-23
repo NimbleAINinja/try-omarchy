@@ -71,7 +71,7 @@ hands those straight back to macOS. The setting is stored under
 (comma-separated; unset means the defaults, empty means none). With "Use
 F1, F2, etc. as standard function keys" on, the same caps arrive as F-keys
 and always reach Omarchy. Volume and media keys are a different event type
-the tap never captures.
+the tap does not capture by default.
 
 Media transport keys arrive as `NX_SYSDEFINED` aux-control events, which
 full grab's tap does not capture by default. When the Keyboard setting
