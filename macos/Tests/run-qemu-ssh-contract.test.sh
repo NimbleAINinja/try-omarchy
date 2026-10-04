@@ -905,8 +905,9 @@ run_scenario hvf-trace-relative 1 '' OMARCHY_QEMU_GPU_HVF_TRACE_LOG=hvf-trace.lo
 assert_contains "$(<"$test_root/hvf-trace-relative/stderr")" 'must be an absolute path'
 [[ ! -f $test_root/hvf-trace-relative/qemu.log ]] || fail 'relative HVF trace path started QEMU'
 
-# Unset keeps the app's defaults: brightness, Mission Control, Spotlight.
-assert_contains "$disabled_qemu" 'swap-opt-cmd=off,host-keys=131:144:145:160'
+# Unset keeps the app's defaults: brightness, Mission Control, Spotlight,
+# Dictation, Do Not Disturb.
+assert_contains "$disabled_qemu" 'swap-opt-cmd=off,host-keys=131:144:145:160:176:177:178'
 
 run_scenario host-keys-custom 0 '' OMARCHY_QEMU_GPU_HOST_KEYS=144,145
 assert_contains "$(<"$test_root/host-keys-custom/qemu.log")" \

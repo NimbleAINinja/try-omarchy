@@ -9,6 +9,8 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
     private let brightnessPopup = NSPopUpButton()
     private let missionControlPopup = NSPopUpButton()
     private let spotlightPopup = NSPopUpButton()
+    private let dictationPopup = NSPopUpButton()
+    private let doNotDisturbPopup = NSPopUpButton()
     private var didClose = false
 
     init(
@@ -43,7 +45,7 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
 
     private func buildWindow() {
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 430),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 570),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -70,12 +72,28 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
 
         configure(brightnessPopup, identifier: "brightness", accessibilityLabel: "Brightness keys")
         configure(missionControlPopup, identifier: "mission-control", accessibilityLabel: "Mission Control key")
-        configure(spotlightPopup, identifier: "spotlight", accessibilityLabel: "Spotlight or Dictation key")
+        configure(spotlightPopup, identifier: "spotlight", accessibilityLabel: "Spotlight or Launchpad key")
+        configure(dictationPopup, identifier: "dictation", accessibilityLabel: "Dictation or Siri key")
+        configure(doNotDisturbPopup, identifier: "do-not-disturb", accessibilityLabel: "Do Not Disturb key")
 
         let rowViews = [
-            routeRow(title: "Brightness", detail: "Display brightness down and up (F1, F2)", control: brightnessPopup),
+            routeRow(
+                title: "Brightness",
+                detail: "Display brightness down and up (F1, F2). Built-in Mac keyboards always keep these with macOS.",
+                control: brightnessPopup
+            ),
             routeRow(title: "Mission Control", detail: "The F3 key", control: missionControlPopup),
-            routeRow(title: "Spotlight / Dictation", detail: "The F4 key", control: spotlightPopup),
+            routeRow(title: "Spotlight / Launchpad", detail: "The F4 key", control: spotlightPopup),
+            routeRow(
+                title: "Dictation / Siri",
+                detail: "The F5 key on built-in Mac keyboards",
+                control: dictationPopup
+            ),
+            routeRow(
+                title: "Do Not Disturb",
+                detail: "The F6 key on built-in Mac keyboards",
+                control: doNotDisturbPopup
+            ),
         ]
         var stacked: [NSView] = []
         for (index, row) in rowViews.enumerated() {
@@ -216,13 +234,17 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
         brightnessPopup.selectItem(withTag: Self.tag(preferences.brightness))
         missionControlPopup.selectItem(withTag: Self.tag(preferences.missionControl))
         spotlightPopup.selectItem(withTag: Self.tag(preferences.spotlight))
+        dictationPopup.selectItem(withTag: Self.tag(preferences.dictation))
+        doNotDisturbPopup.selectItem(withTag: Self.tag(preferences.doNotDisturb))
     }
 
     private func draft() -> KeyboardRoutingPreferences {
         KeyboardRoutingPreferences(
             brightness: Self.route(brightnessPopup),
             missionControl: Self.route(missionControlPopup),
-            spotlight: Self.route(spotlightPopup)
+            spotlight: Self.route(spotlightPopup),
+            dictation: Self.route(dictationPopup),
+            doNotDisturb: Self.route(doNotDisturbPopup)
         )
     }
 

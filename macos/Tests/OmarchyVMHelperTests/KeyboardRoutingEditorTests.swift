@@ -17,14 +17,21 @@ struct KeyboardRoutingEditorTests {
         )
         let brightness: NSPopUpButton = try control("brightness", in: editor)
         let spotlight: NSPopUpButton = try control("spotlight", in: editor)
+        let dictation: NSPopUpButton = try control("dictation", in: editor)
+        let doNotDisturb: NSPopUpButton = try control("do-not-disturb", in: editor)
         #expect(brightness.itemTitles == ["macOS", "Omarchy"])
         #expect(brightness.selectedItem?.tag == 0)
+        #expect(dictation.selectedItem?.tag == 0)
+        #expect(doNotDisturb.selectedItem?.tag == 0)
         spotlight.selectItem(withTag: 1)
+        dictation.selectItem(withTag: 1)
+        doNotDisturb.selectItem(withTag: 1)
         #expect(saved.isEmpty)
         let save: NSButton = try control("save", in: editor)
         save.performClick(nil)
         #expect(saved == [KeyboardRoutingPreferences(
-            brightness: .macOS, missionControl: .macOS, spotlight: .omarchy
+            brightness: .macOS, missionControl: .macOS, spotlight: .omarchy,
+            dictation: .omarchy, doNotDisturb: .omarchy
         )])
         #expect(closed == 1)
     }
@@ -35,7 +42,8 @@ struct KeyboardRoutingEditorTests {
         var saved: [KeyboardRoutingPreferences] = []
         let editor = KeyboardRoutingEditor(
             preferences: KeyboardRoutingPreferences(
-                brightness: .omarchy, missionControl: .omarchy, spotlight: .omarchy
+                brightness: .omarchy, missionControl: .omarchy, spotlight: .omarchy,
+                dictation: .omarchy, doNotDisturb: .omarchy
             ),
             save: { saved.append($0) },
             didClose: {}

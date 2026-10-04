@@ -1634,10 +1634,11 @@ if [[ -n $hvf_trace_log && $hvf_trace_log != /* ]]; then
 fi
 
 # Mac keycodes that stay with macOS while full grab owns the keyboard. Unset
-# keeps the app's defaults (brightness, Mission Control, Spotlight); empty
-# sends every dedicated key to Omarchy. QEMU separates options with commas,
-# so the display option lists them with colons.
-host_keys=${OMARCHY_QEMU_GPU_HOST_KEYS-131,144,145,160}
+# keeps the app's defaults (brightness, Mission Control, Spotlight,
+# Dictation, Do Not Disturb); empty sends every dedicated key to Omarchy.
+# QEMU separates options with commas, so the display option lists them with
+# colons.
+host_keys=${OMARCHY_QEMU_GPU_HOST_KEYS-131,144,145,160,176,177,178}
 cocoa_host_keys=""
 if [[ -n $host_keys ]]; then
   host_keys_error="OMARCHY_QEMU_GPU_HOST_KEYS must be comma-separated keycodes from 0 to 255"

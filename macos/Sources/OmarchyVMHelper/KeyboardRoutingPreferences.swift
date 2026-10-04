@@ -10,6 +10,8 @@ struct KeyboardRoutingPreferences: Equatable {
     var brightness: KeyRoute
     var missionControl: KeyRoute
     var spotlight: KeyRoute
+    var dictation: KeyRoute = .macOS
+    var doNotDisturb: KeyRoute = .macOS
 
     static let defaults = Self(brightness: .macOS, missionControl: .macOS, spotlight: .macOS)
 
@@ -19,7 +21,9 @@ struct KeyboardRoutingPreferences: Equatable {
     // are unaffected.
     static let brightnessKeycodes = [144, 145]
     static let missionControlKeycodes = [160]
-    static let spotlightKeycodes = [131]
+    static let spotlightKeycodes = [131, 177]
+    static let dictationKeycodes = [176]
+    static let doNotDisturbKeycodes = [178]
 
     /// Keycodes that stay with macOS, in the order the launcher publishes them.
     var hostKeycodes: [Int] {
@@ -27,6 +31,8 @@ struct KeyboardRoutingPreferences: Equatable {
         if brightness == .macOS { keycodes += Self.brightnessKeycodes }
         if missionControl == .macOS { keycodes += Self.missionControlKeycodes }
         if spotlight == .macOS { keycodes += Self.spotlightKeycodes }
+        if dictation == .macOS { keycodes += Self.dictationKeycodes }
+        if doNotDisturb == .macOS { keycodes += Self.doNotDisturbKeycodes }
         return keycodes.sorted()
     }
 }
@@ -50,7 +56,9 @@ struct KeyboardRoutingPreferenceStore {
         return KeyboardRoutingPreferences(
             brightness: payload.brightness,
             missionControl: payload.missionControl,
-            spotlight: payload.spotlight
+            spotlight: payload.spotlight,
+            dictation: payload.dictation ?? .macOS,
+            doNotDisturb: payload.doNotDisturb ?? .macOS
         )
     }
 
@@ -59,7 +67,9 @@ struct KeyboardRoutingPreferenceStore {
             schemaVersion: Self.schemaVersion,
             brightness: preferences.brightness,
             missionControl: preferences.missionControl,
-            spotlight: preferences.spotlight
+            spotlight: preferences.spotlight,
+            dictation: preferences.dictation,
+            doNotDisturb: preferences.doNotDisturb
         )
         guard let data = try? JSONEncoder().encode(payload) else { return }
         defaults.set(data, forKey: Self.key)
@@ -70,6 +80,8 @@ struct KeyboardRoutingPreferenceStore {
         let brightness: KeyRoute
         let missionControl: KeyRoute
         let spotlight: KeyRoute
+        let dictation: KeyRoute?
+        let doNotDisturb: KeyRoute?
     }
 }
 
