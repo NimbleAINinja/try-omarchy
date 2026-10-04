@@ -12,6 +12,38 @@ struct KeyboardRoutingPreferenceStoreTests {
         #expect(loaded.brightness == .macOS)
         #expect(loaded.missionControl == .macOS)
         #expect(loaded.spotlight == .macOS)
+        #expect(loaded.dictation == .macOS)
+        #expect(loaded.doNotDisturb == .macOS)
+    }
+
+    @Test("A payload saved before Dictation and Do Not Disturb existed loads them as macOS")
+    func olderPayloadDefaultsNewFieldsToMacOS() throws {
+        let fixture = DefaultsFixture()
+        let older = try JSONSerialization.data(withJSONObject: [
+            "schemaVersion": KeyboardRoutingPreferenceStore.schemaVersion,
+            "brightness": "omarchy", "missionControl": "omarchy", "spotlight": "omarchy",
+        ])
+        fixture.defaults.set(older, forKey: KeyboardRoutingPreferenceStore.key)
+        let loaded = fixture.store.load()
+        #expect(loaded.brightness == .omarchy)
+        #expect(loaded.missionControl == .omarchy)
+        #expect(loaded.spotlight == .omarchy)
+        #expect(loaded.dictation == .macOS)
+        #expect(loaded.doNotDisturb == .macOS)
+    }
+
+    @Test("Dictation and Do Not Disturb round-trip through the store")
+    func roundTripsDictationAndDoNotDisturb() {
+        let fixture = DefaultsFixture()
+        let choice = KeyboardRoutingPreferences(
+            brightness: .macOS, missionControl: .macOS, spotlight: .macOS,
+            dictation: .omarchy, doNotDisturb: .omarchy
+        )
+        fixture.store.save(choice)
+        let loaded = KeyboardRoutingPreferenceStore(defaults: fixture.defaults).load()
+        #expect(loaded == choice)
+        #expect(loaded.dictation == .omarchy)
+        #expect(loaded.doNotDisturb == .omarchy)
     }
 
     @Test("Routing choices persist")
@@ -40,12 +72,14 @@ struct KeyboardRoutingPreferenceStoreTests {
 
     @Test("Host keycodes are the sorted keycodes of rows left with macOS")
     func hostKeycodes() {
-        #expect(KeyboardRoutingPreferences.defaults.hostKeycodes == [131, 144, 145, 160])
+        #expect(KeyboardRoutingPreferences.defaults.hostKeycodes == [131, 144, 145, 160, 176, 177, 178])
         #expect(KeyboardRoutingPreferences(
-            brightness: .omarchy, missionControl: .omarchy, spotlight: .omarchy
+            brightness: .omarchy, missionControl: .omarchy, spotlight: .omarchy,
+            dictation: .omarchy, doNotDisturb: .omarchy
         ).hostKeycodes == [])
         #expect(KeyboardRoutingPreferences(
-            brightness: .macOS, missionControl: .omarchy, spotlight: .omarchy
+            brightness: .macOS, missionControl: .omarchy, spotlight: .omarchy,
+            dictation: .omarchy, doNotDisturb: .omarchy
         ).hostKeycodes == [144, 145])
     }
 
@@ -78,12 +112,13 @@ struct KeyboardRoutingLaunchConfigurationTests {
             baseEnvironment: inherited, preferences: .defaults
         )
         #expect(defaults.environment["KEEP_ME"] == "yes")
-        #expect(defaults.environment[KeyboardRoutingLaunchConfiguration.hostKeysEnvironmentKey] == "131,144,145,160")
+        #expect(defaults.environment[KeyboardRoutingLaunchConfiguration.hostKeysEnvironmentKey] == "131,144,145,160,176,177,178")
 
         let none = KeyboardRoutingLaunchConfiguration.make(
             baseEnvironment: inherited,
             preferences: KeyboardRoutingPreferences(
-                brightness: .omarchy, missionControl: .omarchy, spotlight: .omarchy
+                brightness: .omarchy, missionControl: .omarchy, spotlight: .omarchy,
+                dictation: .omarchy, doNotDisturb: .omarchy
             )
         )
         #expect(none.environment[KeyboardRoutingLaunchConfiguration.hostKeysEnvironmentKey] == "")

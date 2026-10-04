@@ -175,8 +175,9 @@ for forbidden in -no-reboot -no-shutdown ' -gdb ' ' -s '; do
   assert_not_contains "$output" "$forbidden"
 done
 assert_not_contains "$output" "qemu-xhci"
-# Unset keeps the app's defaults: brightness, Mission Control, Spotlight.
-assert_contains "$output" "swap-opt-cmd=off,host-keys=131:144:145:160"
+# Unset keeps the app's defaults: brightness, Mission Control, Spotlight,
+# Dictation, Do Not Disturb.
+assert_contains "$output" "swap-opt-cmd=off,host-keys=131:144:145:160:176:177:178 "
 
 # --- the VM persists; the package offer can be turned off --------------------------
 printf 'guest data' | dd of="$state/shell/disk.img" conv=notrunc 2>/dev/null
