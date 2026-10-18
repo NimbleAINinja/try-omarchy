@@ -286,4 +286,17 @@ enum StartMenuPresentation {
             : "Omarchy opens in a window with the Mac menu bar and Dock available."
     }
 
+    static func dictationDetail(isEnabled: Bool) -> String {
+        isEnabled
+            ? "Apple speech recognition for Omarchy's dictation, using the Mac microphone."
+            : "Omarchy's dictation can't use Apple speech recognition."
+    }
+
+    static func restartCaption(includesDictation: Bool) -> String {
+        let settings = includesDictation
+            ? "CPU, memory, shared folder, networking, port forwarding, immersive mode, and dictation changes"
+            : "CPU, memory, shared folder, networking, port forwarding, and immersive mode changes"
+        return "\(settings) apply when Try Omarchy next starts. Restart to apply them now."
+    }
+
 }
