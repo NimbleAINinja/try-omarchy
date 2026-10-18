@@ -177,6 +177,9 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private var networkEditor: NetworkEditor?
     private let immersiveMode: () -> Bool
     private let setImmersiveMode: (Bool) -> Void
+    private let dictationSupported: Bool
+    private let dictationEnabled: () -> Bool
+    private let setDictationEnabled: (Bool) -> Void
     private let startAutomatically: () -> Bool
     private let setStartAutomatically: (Bool) -> String?
     private let presentStartupSaveError: (NSAlert, NSWindow) -> Void
@@ -239,6 +242,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private(set) var usbDeviceEditor: USBDeviceEditor?
     private(set) var storageEditor: VMStorageEditor?
     private weak var immersiveCaption: NSTextField?
+    private weak var dictationCaption: NSTextField?
     private var accessibilityRow: StartMenuPermissionRow?
     private var microphoneRow: StartMenuPermissionRow?
     private var cameraRow: StartMenuPermissionRow?
@@ -281,6 +285,9 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         networkIdentity: VMNetworkIdentityAccess = .unavailable,
         immersiveMode: @escaping () -> Bool = { true },
         setImmersiveMode: @escaping (Bool) -> Void = { _ in },
+        dictationSupported: Bool = false,
+        dictationEnabled: @escaping () -> Bool = { false },
+        setDictationEnabled: @escaping (Bool) -> Void = { _ in },
         startAutomatically: @escaping () -> Bool = { false },
         setStartAutomatically: @escaping (Bool) -> String? = { _ in nil },
         presentStartupSaveError: @escaping (NSAlert, NSWindow) -> Void = { $0.beginSheetModal(for: $1) },
@@ -324,6 +331,9 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         self.networkIdentity = networkIdentity
         self.immersiveMode = immersiveMode
         self.setImmersiveMode = setImmersiveMode
+        self.dictationSupported = dictationSupported
+        self.dictationEnabled = dictationEnabled
+        self.setDictationEnabled = setDictationEnabled
         self.startAutomatically = startAutomatically
         self.setStartAutomatically = setStartAutomatically
         self.presentStartupSaveError = presentStartupSaveError
@@ -872,7 +882,11 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
             actions: [],
             minimumHeight: 72
         ))
-        integrationRowViews.append(contentsOf: [resourceRow, networkingRow, portForwardingRow, usbRow, immersiveRow, automaticStartSettingRow()])
+        integrationRowViews.append(contentsOf: [resourceRow, networkingRow, portForwardingRow, usbRow, immersiveRow])
+        if dictationSupported {
+            integrationRowViews.append(dictationSettingRow(isEnabled: dictationEnabled()))
+        }
+        integrationRowViews.append(automaticStartSettingRow())
 
         var permissionRowsAndSeparators: [NSView] = []
         for (index, row) in permissionRowViews.enumerated() {
@@ -1021,7 +1035,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         restart.isEnabled = !controlsBusy
         let restartCaption = NSTextField(wrappingLabelWithString: shutdownInProgress
             ? "Waiting for Omarchy to shut down. Finish saving your work inside Omarchy."
-            : "CPU, memory, shared folder, networking, port forwarding, and immersive mode changes apply when Try Omarchy next starts. Restart to apply them now.")
+            : StartMenuPresentation.restartCaption(includesDictation: dictationSupported))
         restartCaption.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
         restartCaption.textColor = OmarchyStartMenuTheme.muted
         restartCaption.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -1388,6 +1402,20 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         return setting.row
     }
 
+    private func dictationSettingRow(isEnabled: Bool) -> NSView {
+        let setting = toggleSettingRow(
+            titleText: "Dictation",
+            detailText: StartMenuPresentation.dictationDetail(isEnabled: isEnabled),
+            symbolName: "waveform",
+            identifier: "dictation",
+            accessibilityLabel: "Apple dictation",
+            isEnabled: isEnabled,
+            action: #selector(changeDictation(_:))
+        )
+        dictationCaption = setting.caption
+        return setting.row
+    }
+
     private func automaticStartSettingRow() -> NSView {
         let detail = virtualMachineRunning
             ? "Launch Omarchy with your saved settings. Open settings anytime from Omarchy’s Setup menu."
@@ -1735,6 +1763,24 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         setImmersiveMode(isEnabled)
         let detailText = StartMenuPresentation.immersiveDetail(isEnabled: isEnabled)
         immersiveCaption?.stringValue = detailText
+        (sender as? OmarchyToggleButton)?.refreshAppearance()
+        sender.setAccessibilityHelp(detailText)
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: detailText,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+    }
+
+    @objc private func changeDictation(_ sender: NSButton) {
+        guard !controlsBusy, !resetInProgress else { return }
+        let isEnabled = sender.state == .on
+        setDictationEnabled(isEnabled)
+        let detailText = StartMenuPresentation.dictationDetail(isEnabled: isEnabled)
+        dictationCaption?.stringValue = detailText
         (sender as? OmarchyToggleButton)?.refreshAppearance()
         sender.setAccessibilityHelp(detailText)
         NSAccessibility.post(
