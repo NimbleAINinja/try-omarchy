@@ -48,6 +48,7 @@ Shutting down Omarchy closes the app and leaves it closed.
 - FaceTime HD and other Mac cameras exposed to Omarchy as an on-demand 720p webcam
 - The Mac's battery charge and charging state mirrored into the Omarchy bar
 - Two-way clipboard sharing for text and PNG images between macOS and Omarchy
+- On macOS 26, push-to-talk dictation recognised on the Mac with Apple's on-device speech recognition ([host dictation](docs/host-dictation.md))
 - One optional shared Mac folder, available inside Omarchy under the same name (`~/Work` stays `~/Work`)
 - Loopback-only TCP and UDP port forwarding from the Mac into Omarchy
 
