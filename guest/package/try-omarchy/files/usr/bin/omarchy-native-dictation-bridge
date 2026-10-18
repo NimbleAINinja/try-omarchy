@@ -3,7 +3,7 @@
 
 The Mac recognises the speech (Apple's SpeechAnalyzer, docs/host-dictation.md)
 and the guest's dictation tools talk to $XDG_RUNTIME_DIR/apple-dictation.sock
-with one connection per command, as the omarchy-apple-dictation prototype
+with one connection per command, as the apple-dictation prototype
 defined it:
 
     {"cmd":"start","model":"speech"|"dictation"}  stays open for the events:
