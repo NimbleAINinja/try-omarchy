@@ -10,7 +10,9 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 
 PACKAGE = Path(__file__).resolve().parents[1] / "try-omarchy"
@@ -992,6 +994,219 @@ class ImportPrevious(unittest.TestCase):
         self.assertIn("spotify", result.stdout)
         for name in ("try-omarchy-runtime", "linux-aarch64", "vulkan-swrast"):
             self.assertNotIn(name, result.stdout)
+
+
+class DictationBridge(unittest.TestCase):
+    """The guest end of dev.tryomarchy.dictation, with a pty as the port and
+    the test as the Mac's dictation bridge on its other side."""
+
+    BRIDGE = FILES / "usr/bin/omarchy-native-dictation-bridge"
+
+    def setUp(self):
+        import pty
+        import tty
+        self.runtime = tempfile.TemporaryDirectory()
+        self.host, port = pty.openpty()
+        tty.setraw(port)
+        self.port_fd = port
+        self.port_path = os.ttyname(port)
+        self.socket_path = os.path.join(self.runtime.name, "apple-dictation.sock")
+        self.pending = b""
+        self.process = None
+        self.clients = []
+
+    def tearDown(self):
+        for client in self.clients:
+            client.close()
+        if self.process and self.process.poll() is None:
+            self.process.kill()
+        if self.process:
+            self.process.wait(timeout=5)
+            self.process.stderr.close()
+        for descriptor in (self.host, self.port_fd):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        self.runtime.cleanup()
+
+    def start(self, port_path=None):
+        env = {**os.environ, "XDG_RUNTIME_DIR": self.runtime.name,
+               "OMARCHY_DICTATION_PORT": port_path or self.port_path}
+        self.process = subprocess.Popen([sys.executable, str(self.BRIDGE)], env=env,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    def started(self):
+        self.start()
+        self.assertEqual(self.host_read(), {"type": "hello", "version": 1})
+
+    def host_read(self, timeout=2.0):
+        import select
+        deadline = time.monotonic() + timeout
+        while b"\n" not in self.pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.host], [], [], remaining)[0]:
+                return None
+            try:
+                chunk = os.read(self.host, 65536)
+            except OSError:
+                return None
+            if not chunk:
+                return None
+            self.pending += chunk
+        line, self.pending = self.pending.split(b"\n", 1)
+        return json.loads(line)
+
+    def host_send(self, **message):
+        os.write(self.host, (json.dumps(message) + "\n").encode())
+
+    def client(self):
+        import socket
+        deadline = time.monotonic() + 3
+        while not os.path.exists(self.socket_path):
+            self.assertLess(time.monotonic(), deadline, "the bridge never served its socket")
+            time.sleep(0.01)
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(3)
+        client.connect(self.socket_path)
+        self.clients.append(client)
+        return client
+
+    def request(self, **message):
+        client = self.client()
+        client.sendall((json.dumps(message) + "\n").encode())
+        return client
+
+    @staticmethod
+    def client_read(client, timeout=3.0):
+        """The next line as JSON, or "EOF" when the bridge closed the connection."""
+        import socket
+        client.settimeout(timeout)
+        data = b""
+        while b"\n" not in data:
+            try:
+                chunk = client.recv(65536)
+            except socket.timeout:
+                return None
+            if not chunk:
+                return "EOF" if not data else json.loads(data)
+            data += chunk
+        return json.loads(data.split(b"\n", 1)[0])
+
+    def read_events(self, client, count):
+        events = []
+        buffer = b""
+        client.settimeout(3)
+        while len(events) < count:
+            while b"\n" not in buffer:
+                chunk = client.recv(65536)
+                if not chunk:
+                    events.append("EOF")
+                    return events
+                buffer += chunk
+            line, buffer = buffer.split(b"\n", 1)
+            events.append(json.loads(line))
+        rest = client.recv(65536)
+        if not rest:
+            events.append("EOF")
+        return events
+
+    def test_says_hello_on_open(self):
+        self.started()
+        self.client()
+        self.assertEqual(stat.S_IMODE(os.stat(self.socket_path).st_mode), 0o600)
+
+    def test_start_streams_until_final(self):
+        self.started()
+        owner = self.request(cmd="start", model="dictation")
+        self.assertEqual(self.host_read(), {"type": "start", "session": 1, "model": "dictation"})
+        self.host_send(type="recording", session=1)
+        self.host_send(type="partial", session=1, text="hi")
+        self.host_send(type="final", session=1, text="hi", ms=90)
+        self.assertEqual(self.read_events(owner, 3), [
+            {"event": "recording"}, {"event": "partial", "text": "hi"},
+            {"event": "final", "text": "hi", "ms": 90}, "EOF"])
+
+    def test_stop_and_cancel_reply_ok_and_reach_host(self):
+        self.started()
+        self.request(cmd="start")
+        self.assertEqual(self.host_read()["type"], "start")
+        self.assertEqual(self.read_events(self.request(cmd="stop"), 1), [{"ok": True}, "EOF"])
+        self.assertEqual(self.host_read(), {"type": "stop", "session": 1})
+        self.assertEqual(self.read_events(self.request(cmd="cancel"), 1), [{"ok": True}, "EOF"])
+        self.assertEqual(self.host_read(), {"type": "cancel", "session": 1})
+
+    def test_ping_round_trips_and_times_out(self):
+        self.started()
+        pinger = self.request(cmd="ping")
+        ping = self.host_read()
+        self.assertEqual(ping["type"], "ping")
+        self.host_send(type="pong", id=ping["id"])
+        self.assertEqual(self.read_events(pinger, 1), [{"ok": True, "session": False}, "EOF"])
+        silent = self.request(cmd="ping")
+        self.assertEqual(self.host_read()["type"], "ping")
+        self.assertEqual(self.read_events(silent, 1), [{"ok": False, "error": "host not responding"}, "EOF"])
+
+    def test_second_start_cancels_first_owner(self):
+        self.started()
+        first = self.request(cmd="start")
+        self.assertEqual(self.host_read()["session"], 1)
+        self.request(cmd="start")
+        self.assertEqual(self.read_events(first, 1), [{"event": "cancelled"}, "EOF"])
+        self.assertEqual(self.host_read(), {"type": "start", "session": 2, "model": "speech"})
+
+    def test_owner_hangup_cancels_on_host(self):
+        self.started()
+        owner = self.request(cmd="start")
+        self.assertEqual(self.host_read()["type"], "start")
+        owner.close()
+        self.assertEqual(self.host_read(), {"type": "cancel", "session": 1})
+
+    def test_owner_close_after_final_sends_nothing(self):
+        self.started()
+        owner = self.request(cmd="start")
+        self.host_read()
+        self.host_send(type="final", session=1, text="", ms=1)
+        self.assertEqual(self.read_events(owner, 1), [{"event": "final", "text": "", "ms": 1}, "EOF"])
+        owner.close()
+        self.assertIsNone(self.host_read(timeout=0.5))
+
+    def test_stop_before_recording_is_forwarded(self):
+        self.started()
+        owner = self.request(cmd="start")
+        self.assertEqual(self.read_events(self.request(cmd="stop"), 1), [{"ok": True}, "EOF"])
+        self.assertEqual(self.host_read(), {"type": "start", "session": 1, "model": "speech"})
+        self.assertEqual(self.host_read(), {"type": "stop", "session": 1})
+        self.host_send(type="recording", session=1)
+        self.host_send(type="processing", session=1)
+        self.host_send(type="final", session=1, text="quick", ms=40)
+        self.assertEqual(self.read_events(owner, 3), [
+            {"event": "recording"}, {"event": "processing"},
+            {"event": "final", "text": "quick", "ms": 40}, "EOF"])
+
+    def test_live_session_times_out_without_host_events(self):
+        self.started()
+        owner = self.request(cmd="start")
+        self.host_read()
+        self.assertEqual(self.client_read(owner, timeout=7), {"event": "error", "message": "host not responding"})
+
+    def test_host_eof_ends_session_with_error(self):
+        self.started()
+        owner = self.request(cmd="start")
+        self.host_read()
+        os.close(self.host)
+        self.assertEqual(self.client_read(owner), {"event": "error", "message": "host went away"})
+        self.assertEqual(self.process.wait(timeout=5), 1)
+
+    def test_unknown_command_is_refused(self):
+        self.started()
+        self.assertEqual(self.read_events(self.request(cmd="launch"), 1),
+                         [{"ok": False, "error": "unknown command"}, "EOF"])
+
+    def test_exits_quietly_without_the_port(self):
+        self.start(port_path=os.path.join(self.runtime.name, "missing"))
+        self.assertEqual(self.process.wait(timeout=5), 0)
+        self.assertFalse(os.path.exists(self.socket_path))
 
 
 if __name__ == "__main__":
