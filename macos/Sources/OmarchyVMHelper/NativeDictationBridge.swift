@@ -29,6 +29,11 @@ final class NativeDictationBridge: @unchecked Sendable {
     private var newestSession = 0
     private var stopped = false
 
+    /// A guest that stops reading (its service stopped mid-session, so QEMU
+    /// stops draining the port) fails a write after this long, and the live
+    /// session ends instead of recording for nobody.
+    static let writeTimeoutSeconds = 2.0
+
     init(targetPID: pid_t, socketPath: String, engine: DictationEngine) throws {
         guard let processIdentity = KernelProcessIdentity.capture(processIdentifier: targetPID),
               processIdentity.isQEMUSystemProcess else {
@@ -36,14 +41,21 @@ final class NativeDictationBridge: @unchecked Sendable {
         }
         descriptor = try NativeBridgeSocket.connectSecure(path: socketPath, label: "dictation bridge")
         self.engine = engine
+        Self.setWriteTimeout(descriptor, seconds: Self.writeTimeoutSeconds)
     }
 
     /// Test-only: an already-connected stream, such as one end of a socketpair.
-    init(descriptor: Int32, engine: DictationEngine) {
+    init(descriptor: Int32, engine: DictationEngine, writeTimeoutSeconds: Double = NativeDictationBridge.writeTimeoutSeconds) {
         var enabled: Int32 = 1
         _ = setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
         self.descriptor = descriptor
         self.engine = engine
+        Self.setWriteTimeout(descriptor, seconds: writeTimeoutSeconds)
+    }
+
+    private static func setWriteTimeout(_ descriptor: Int32, seconds: Double) {
+        var timeout = timeval(tv_sec: Int(seconds), tv_usec: Int32((seconds - Double(Int(seconds))) * 1_000_000))
+        _ = setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }
 
     deinit {
@@ -144,13 +156,25 @@ final class NativeDictationBridge: @unchecked Sendable {
 
     private func deliver(_ event: DictationEvent, session: Int) {
         lock.lock()
-        defer { lock.unlock() }
-        guard !ended.contains(session) else { return }
+        guard !ended.contains(session) else {
+            lock.unlock()
+            return
+        }
         if event.isTerminal {
             ended.insert(session)
             if live == session { live = nil }
         }
-        writeLocked(DictationHostMessage.event(event, session: session))
+        let delivered = writeLocked(DictationHostMessage.event(event, session: session))
+        let stalled = !delivered && !stopped && live == session
+        if stalled {
+            ended.insert(session)
+            live = nil
+        }
+        lock.unlock()
+        if stalled {
+            fputs("[dictation-bridge] the guest stopped reading; ending session \(session)\n", stderr)
+            engine.cancel(session: session)
+        }
     }
 
     /// Caller holds `lock`.
@@ -159,14 +183,17 @@ final class NativeDictationBridge: @unchecked Sendable {
         ended = ended.filter { $0 > newestSession - Self.endedSessionWindow }
     }
 
-    /// Caller holds `lock`. A failed write means QEMU is going away; the read
-    /// loop sees the same and ends the bridge.
-    private func writeLocked(_ data: Data) {
-        guard !stopped else { return }
+    /// Caller holds `lock`. A failed write means QEMU is going away (the read
+    /// loop sees the same and ends the bridge) or the guest stopped reading.
+    @discardableResult
+    private func writeLocked(_ data: Data) -> Bool {
+        guard !stopped else { return false }
         do {
             try NativeBridgeSocket.writeAll(data, to: descriptor, label: "dictation bridge")
+            return true
         } catch {
             fputs("[dictation-bridge] \(error)\n", stderr)
+            return false
         }
     }
 }

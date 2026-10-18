@@ -25,6 +25,7 @@ import errno
 import json
 import os
 import selectors
+import signal
 import socket
 import sys
 import time
@@ -41,6 +42,8 @@ PING_SECONDS = 2.0
 SESSION_SECONDS = 5.0
 TERMINAL = ("final", "cancelled", "error")
 TICK = 0.25
+# On SIGTERM, how long to keep trying to hand the host its cancel.
+FLUSH_SECONDS = 1.0
 
 
 def log(message: str) -> None:
@@ -74,9 +77,14 @@ class Bridge:
         self.skipping_port_line = False
         self.next_session = 1
         self.next_ping = 1
-        self.live: tuple[int, Client] | None = None
-        self.live_deadline = 0.0
+        # Every session still owed its terminal event, with its owner and its
+        # deadline. `live` is the one still recording; a stopped session stays
+        # here until its final arrives, so pressing again while it finishes
+        # doesn't lose its text.
+        self.sessions: dict[int, tuple[Client, float]] = {}
+        self.live: int | None = None
         self.pings: dict[int, tuple[Client, float]] = {}
+        self.terminating = False
         self.selector.register(listener, selectors.EVENT_READ, "listener")
         self.selector.register(port, selectors.EVENT_READ, "port")
 
@@ -139,15 +147,17 @@ class Bridge:
                 waiting[0].send({"ok": True, "session": "session" in message})
                 self.close(waiting[0])
             return
-        if self.live is None or message.get("session") != self.live[0]:
+        session = message.get("session")
+        if not isinstance(session, int) or session not in self.sessions:
             return
-        owner = self.live[1]
+        owner = self.sessions[session][0]
         event = {key: value for key, value in message.items() if key not in ("type", "session")}
         owner.send({"event": kind, **event})
-        self.live_deadline = time.monotonic() + SESSION_SECONDS
         if kind in TERMINAL:
-            self.live = None
+            self.end(session)
             self.close(owner)
+        else:
+            self.sessions[session] = (owner, time.monotonic() + SESSION_SECONDS)
 
     # --- the guest's tools --------------------------------------------------
 
@@ -193,18 +203,22 @@ class Bridge:
             model = "dictation" if message.get("model") == "dictation" else "speech"
             if self.live is not None:
                 # The host cancels it too; its owner hears now.
-                previous = self.live[1]
+                previous = self.sessions[self.live][0]
+                self.end(self.live)
                 previous.send({"event": "cancelled"})
                 self.close(previous)
             session = self.next_session
             self.next_session += 1
-            self.live = (session, client)
-            self.live_deadline = time.monotonic() + SESSION_SECONDS
+            self.live = session
+            self.sessions[session] = (client, time.monotonic() + SESSION_SECONDS)
             self.to_host({"type": "start", "session": session, "model": model})
         elif command in ("stop", "cancel"):
             if self.live is not None:
-                self.to_host({"type": command, "session": self.live[0]})
-                self.live_deadline = time.monotonic() + SESSION_SECONDS
+                session = self.live
+                self.to_host({"type": command, "session": session})
+                self.sessions[session] = (self.sessions[session][0], time.monotonic() + SESSION_SECONDS)
+                if command == "stop":
+                    self.live = None  # finishing; it keeps its owner until final
             client.send({"ok": True})
             self.close(client)
         elif command == "ping":
@@ -219,11 +233,18 @@ class Bridge:
         client.send({"ok": False, "error": error})
         self.close(client)
 
-    def hang_up(self, client: Client) -> None:
-        if self.live is not None and self.live[1] is client:
-            # Don't leave the Mac microphone running for nobody.
-            self.to_host({"type": "cancel", "session": self.live[0]})
+    def end(self, session: int) -> None:
+        self.sessions.pop(session, None)
+        if self.live == session:
             self.live = None
+
+    def hang_up(self, client: Client) -> None:
+        for session, (owner, _) in list(self.sessions.items()):
+            if owner is client:
+                if session == self.live:
+                    # Don't leave the Mac microphone running for nobody.
+                    self.to_host({"type": "cancel", "session": session})
+                self.end(session)
         self.close(client)
 
     def close(self, client: Client) -> None:
@@ -244,26 +265,48 @@ class Bridge:
             if now >= deadline:
                 client.send({"ok": False, "error": "host not responding"})
                 self.close(client)
-        if self.live is not None and now >= self.live_deadline:
-            session, owner = self.live
-            self.live = None
-            self.to_host({"type": "cancel", "session": session})
-            owner.send({"event": "error", "message": "host not responding"})
+        for session, (owner, deadline) in list(self.sessions.items()):
+            if now >= deadline:
+                if session == self.live:
+                    self.to_host({"type": "cancel", "session": session})
+                self.end(session)
+                owner.send({"event": "error", "message": "host not responding"})
+                self.close(owner)
+
+    def end_all(self, live_event: dict[str, Any], others: dict[str, Any]) -> None:
+        for session, (owner, _) in list(self.sessions.items()):
+            owner.send(live_event if session == self.live else others)
+            self.end(session)
             self.close(owner)
 
     def host_gone(self) -> None:
-        if self.live is not None:
-            owner = self.live[1]
-            self.live = None
-            owner.send({"event": "error", "message": "host went away"})
-            self.close(owner)
+        gone = {"event": "error", "message": "host went away"}
+        self.end_all(gone, gone)
         for client, _ in list(self.pings.values()):
             client.send({"ok": False, "error": "host went away"})
             self.close(client)
 
+    def terminate(self) -> None:
+        """Stopped by systemd (logout, upgrade): stop the Mac microphone first."""
+        if self.live is not None:
+            self.to_host({"type": "cancel", "session": self.live})
+        self.end_all({"event": "cancelled"}, {"event": "error", "message": "the dictation service stopped"})
+        deadline = time.monotonic() + FLUSH_SECONDS
+        while self.outgoing and time.monotonic() < deadline:
+            if self.selector.select(min(TICK, max(deadline - time.monotonic(), 0))):
+                self.drain()
+
+    def request_termination(self, *_: Any) -> None:
+        self.terminating = True
+
     def run(self) -> int:
+        signal.signal(signal.SIGTERM, self.request_termination)
+        signal.signal(signal.SIGINT, self.request_termination)
         self.to_host({"type": "hello", "version": 1})
         while True:
+            if self.terminating:
+                self.terminate()
+                return 0
             for key, events in self.selector.select(TICK):
                 if key.data == "listener":
                     self.accept()

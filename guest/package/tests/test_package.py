@@ -1149,8 +1149,14 @@ class DictationBridge(unittest.TestCase):
         self.assertEqual(self.host_read()["type"], "start")
         self.assertEqual(self.read_events(self.request(cmd="stop"), 1), [{"ok": True}, "EOF"])
         self.assertEqual(self.host_read(), {"type": "stop", "session": 1})
+        # Stop handed session 1 to finishing; as in the prototype, a cancel
+        # now has no live session to act on.
         self.assertEqual(self.read_events(self.request(cmd="cancel"), 1), [{"ok": True}, "EOF"])
-        self.assertEqual(self.host_read(), {"type": "cancel", "session": 1})
+        self.assertIsNone(self.host_read(timeout=0.5))
+        self.request(cmd="start")
+        self.assertEqual(self.host_read()["session"], 2)
+        self.assertEqual(self.read_events(self.request(cmd="cancel"), 1), [{"ok": True}, "EOF"])
+        self.assertEqual(self.host_read(), {"type": "cancel", "session": 2})
 
     def test_ping_round_trips_and_times_out(self):
         self.started()
@@ -1213,6 +1219,29 @@ class DictationBridge(unittest.TestCase):
         os.close(self.host)
         self.assertEqual(self.client_read(owner), {"event": "error", "message": "host went away"})
         self.assertEqual(self.process.wait(timeout=5), 1)
+
+    def test_pressing_again_while_finishing_keeps_the_first_final(self):
+        self.started()
+        first = self.request(cmd="start")
+        self.host_read()
+        self.assertEqual(self.read_events(self.request(cmd="stop"), 1), [{"ok": True}, "EOF"])
+        self.assertEqual(self.host_read(), {"type": "stop", "session": 1})
+        second = self.request(cmd="start")
+        self.assertEqual(self.host_read(), {"type": "start", "session": 2, "model": "speech"})
+        self.host_send(type="final", session=1, text="first", ms=200)
+        self.assertEqual(self.read_events(first, 1), [{"event": "final", "text": "first", "ms": 200}, "EOF"])
+        self.host_send(type="final", session=2, text="second", ms=100)
+        self.assertEqual(self.read_events(second, 1), [{"event": "final", "text": "second", "ms": 100}, "EOF"])
+
+    def test_stopping_the_service_cancels_the_live_session(self):
+        import signal
+        self.started()
+        owner = self.request(cmd="start")
+        self.host_read()
+        self.process.send_signal(signal.SIGTERM)
+        self.assertEqual(self.host_read(), {"type": "cancel", "session": 1})
+        self.assertEqual(self.client_read(owner), {"event": "cancelled"})
+        self.assertEqual(self.process.wait(timeout=5), 0)
 
     def test_unknown_command_is_refused(self):
         self.started()

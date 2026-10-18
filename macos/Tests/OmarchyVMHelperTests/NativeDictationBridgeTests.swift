@@ -62,12 +62,12 @@ private final class DictationHarness {
     private let finished = DispatchSemaphore(value: 0)
     private var pending = Data()
 
-    init(engine: FakeDictationEngine = FakeDictationEngine()) throws {
+    init(engine: FakeDictationEngine = FakeDictationEngine(), writeTimeoutSeconds: Double = 2) throws {
         var descriptors: [Int32] = [-1, -1]
         try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
         self.engine = engine
         guest = descriptors[1]
-        bridge = NativeDictationBridge(descriptor: descriptors[0], engine: engine)
+        bridge = NativeDictationBridge(descriptor: descriptors[0], engine: engine, writeTimeoutSeconds: writeTimeoutSeconds)
         let bridge = bridge
         let finished = finished
         Thread.detachNewThread {
@@ -209,6 +209,19 @@ struct NativeDictationBridgeTests {
         harness.send(String(repeating: "a", count: 70_000) + "\n" + "{]\n" + #"{"type":"ping","id":1}"# + "\n")
         #expect(harness.line() == #"{"id":1,"type":"pong"}"#)
         #expect(harness.engine.calls == [])
+    }
+
+    @Test("A guest that stops reading ends the live session instead of holding the microphone")
+    func stalledGuestCancelsTheLiveSession() throws {
+        let harness = try DictationHarness(writeTimeoutSeconds: 0.2)
+        harness.send(#"{"type":"start","session":1}"# + "\n")
+        #expect(harness.calls(1) == ["start 1 speech"])
+        // The guest never reads: the socket buffer fills and a write stalls.
+        let words = String(repeating: "a", count: 4000)
+        for _ in 0..<200 where !harness.engine.calls.contains("cancel 1") {
+            harness.engine.emit(.partial(words), session: 1)
+        }
+        #expect(harness.engine.calls == ["start 1 speech", "cancel 1"])
     }
 
     @Test("The line reader honours a configured limit")

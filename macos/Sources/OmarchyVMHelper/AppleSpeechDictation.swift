@@ -17,6 +17,8 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
     static let levelInterval = 0.08
     static let microphoneDenied = "Allow microphone access for Try Omarchy in System Settings"
     static let downloadingAssets = "Downloading Apple speech assets; try again in a moment"
+    /// No session records longer than the guest client waits for one.
+    static let maximumSessionSeconds: UInt64 = 600
 
     private enum Command {
         case prepare
@@ -24,6 +26,7 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
         case stop(Int)
         case cancel(Int)
         case microphoneChanged
+        case timeLimit(Int)
         case assetsInstalled(DictationModel)
     }
 
@@ -111,6 +114,8 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
             if session?.id == id { await end(with: .cancelled) }
         case .microphoneChanged:
             if session != nil { await end(with: .error("microphone changed")) }
+        case let .timeLimit(id):
+            if session?.id == id { await end(with: .error("recording stopped after 10 minutes")) }
         case let .assetsInstalled(model):
             installing.remove(model)
         }
@@ -245,6 +250,10 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
             events(.partial(text.trimmingCharacters(in: .whitespaces)))
         }
         session = Session(id: id, events: events, analyzer: analyzer, input: input, collector: collector)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.maximumSessionSeconds * 1_000_000_000)
+            self?.commands.yield(.timeLimit(id))
+        }
         fputs("[dictation-bridge] session \(id) started (\(model.rawValue))\n", stderr)
     }
 
