@@ -8,9 +8,9 @@ enum DictationSupport {
     /// macos-15 job) leave the recogniser out.
     static var isCompiledIn: Bool {
         #if compiler(>=6.2)
-        true
+        return true
         #else
-        false
+        return false
         #endif
     }
 

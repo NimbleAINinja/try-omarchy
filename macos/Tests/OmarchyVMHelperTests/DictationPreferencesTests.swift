@@ -73,6 +73,7 @@ struct DictationPreferencesTests {
     @Test("The Dictation row appears only where dictation can run", arguments: [true, false])
     @MainActor
     func rowAppearsOnlyWhenSupported(supported: Bool) throws {
+        _ = NSApplication.shared
         let menu = makeMenu(dictationSupported: supported)
         menu.prepareForPresentation(visibleFrame: NSRect(x: 0, y: 0, width: 1440, height: 900))
         defer { menu.dismiss() }

@@ -5,7 +5,8 @@ install running in the Mac app (see [the architecture](../../docs/architecture.m
 
 - the host bridges: clipboard, audio, camera, battery (including the DKMS
   `try-omarchy-battery` module, whose source is in `try-omarchy/battery`),
-  time zone, Touch ID for sudo and 1Password, and the settings port;
+  time zone, Touch ID for sudo and 1Password, Apple dictation (macOS 26), and
+  the settings port;
 - the Mac shared folder mount and the home-folder link;
 - the launcher's per-boot settings;
 - first-boot language seeding and the Mac JIS 英数/かな keys;
@@ -70,7 +71,7 @@ not ignore, so caches and other local files never reach the package.
 | credential `tryomarchy.host` | host → guest | Keyboard geometry, locale, time zone, shared folder name, SSH, VirGL flags |
 | credential `tryomarchy.package` + 9p `tryomarchy-packages` | host → guest | The app's bundled package, installed before login when newer |
 | `dev.tryomarchy.guest` | guest → host | Status reports (protocol 1, JSON lines every 10 s) |
-| `dev.tryomarchy.{audio,clipboard,camera,battery,timezone,authentication,settings}` | both | The host bridges, one port per integration |
+| `dev.tryomarchy.{audio,clipboard,camera,battery,timezone,authentication,settings,dictation}` | both | The host bridges, one port per integration (`dictation` only on macOS 26 with an Xcode 26 build) |
 
 A status report looks like this:
 
@@ -84,10 +85,10 @@ know about. Either side can therefore be updated first.
 
 ## Device access, SSH, language and input
 
-- The user-facing ports (audio, clipboard, camera, settings) and the camera
-  loopback device carry `TAG+="uaccess"`. logind grants them to whoever holds
-  the active session. Omarchy's owner provisioning does not add the owner to
-  `audio`, `video` or `users`. Audio, camera and clipboard bridges follow
+- The user-facing ports (audio, clipboard, camera, settings, dictation) and the
+  camera loopback device carry `TAG+="uaccess"`. logind grants them to whoever
+  holds the active session. Omarchy's owner provisioning does not add the owner
+  to `audio`, `video` or `users`. Audio, camera, clipboard and dictation bridges follow
   `graphical-session.target`, so provisioning and SSH user managers do not
   compete with the desktop for the host ports. Package upgrades move enabled
   global audio and camera units to that target, preserving disabled units.
