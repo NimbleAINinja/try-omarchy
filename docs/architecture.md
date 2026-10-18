@@ -165,6 +165,15 @@ On a Mac with no internal battery the guest sees only mains power and the bar
 shows nothing. See [host battery](host-battery.md) for the protocol and the
 sysfs contract.
 
+On macOS 26 a further port (`dev.tryomarchy.dictation`) carries push-to-talk
+dictation. A Swift bridge records the Mac microphone only while a session is
+live and recognises it with Apple's on-device `SpeechAnalyzer`, streaming
+level, partial and final events tagged with the guest's session ids. A user
+agent in the desktop session serves those sessions to the guest's dictation
+tools on `$XDG_RUNTIME_DIR/apple-dictation.sock`. The recogniser builds only
+with the macOS 26 SDK; on macOS 15, or from an older Xcode, the app adds no
+port and shows no setting. See [host dictation](host-dictation.md).
+
 A root-only authentication port
 (`dev.tryomarchy.authentication`) lets the guest's `sudo` PAM policy request a
 fixed-purpose macOS Touch ID prompt. Enrollment creates a non-exportable P-256

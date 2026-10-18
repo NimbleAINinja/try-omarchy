@@ -123,7 +123,8 @@ check_installed() { # label
   else ok "$label: every preset unit is enabled"; fi
   check "$label: NTP is enabled" test "$(systemctl is-enabled systemd-timesyncd.service 2>/dev/null)" = enabled
   # The graphical bridges start with the desktop session, not every user manager.
-  for unit in omarchy-native-audio-bridge.service omarchy-native-camera-bridge.service omarchy-native-clipboard-bridge.service; do
+  for unit in omarchy-native-audio-bridge.service omarchy-native-camera-bridge.service omarchy-native-clipboard-bridge.service \
+    omarchy-native-dictation-bridge.service; do
     if [[ -L /etc/systemd/user/graphical-session.target.wants/$unit && ! -e /etc/systemd/user/default.target.wants/$unit ]]; then
       ok "$label: $unit starts with the graphical session"
     else

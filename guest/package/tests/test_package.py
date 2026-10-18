@@ -79,12 +79,28 @@ class PackageLayout(unittest.TestCase):
 
 class GraphicalBridges(unittest.TestCase):
     def test_desktop_bridges_start_and_stop_with_the_graphical_session(self):
-        for bridge in ("audio", "camera", "clipboard"):
+        for bridge in ("audio", "camera", "clipboard", "dictation"):
             unit = configparser.ConfigParser(interpolation=None, strict=False)
             unit.read(FILES / f"usr/lib/systemd/user/omarchy-native-{bridge}-bridge.service")
             self.assertIn("graphical-session.target", unit["Unit"]["PartOf"].split())
             self.assertIn("graphical-session.target", unit["Unit"]["After"].split())
             self.assertEqual(unit["Install"]["WantedBy"], "graphical-session.target")
+
+    def test_dictation_bridge_is_enabled_once_on_upgrade(self):
+        install = (PACKAGE / "try-omarchy.install").read_text()
+        self.assertIn("omarchy-native-dictation-bridge.service", install[:install.index("post_install()")])
+        post_upgrade = install[install.index("post_upgrade()"):]
+        self.assertIn('if [ "$(vercmp "$2" 0.1.0-24)" -lt 0 ]; then\n'
+                      '    systemctl --global preset omarchy-native-dictation-bridge.service', post_upgrade)
+        self.assertIn("pkgrel=24\n", (PACKAGE / "PKGBUILD").read_text())
+
+    def test_dictation_bridge_waits_for_its_port(self):
+        unit = configparser.ConfigParser(interpolation=None, strict=False)
+        unit.read(FILES / "usr/lib/systemd/user/omarchy-native-dictation-bridge.service")
+        self.assertEqual(unit["Unit"]["ConditionPathExists"], "/dev/virtio-ports/dev.tryomarchy.dictation")
+        self.assertEqual(unit["Service"]["ExecStart"], "/usr/bin/omarchy-native-dictation-bridge")
+        rule = (FILES / "usr/lib/udev/rules.d/70-try-omarchy-dictation.rules").read_text()
+        self.assertIn('ATTR{name}=="dev.tryomarchy.dictation", GROUP="users", MODE="0660", TAG+="uaccess"', rule)
 
     def test_upgrade_moves_enabled_bridges_and_keeps_disabled_or_masked_choices(self):
         with tempfile.TemporaryDirectory() as directory:
