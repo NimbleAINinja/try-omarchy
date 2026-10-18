@@ -118,8 +118,13 @@ struct BatterySendPolicy {
 struct GuestLineReader {
     static let maximumLineBytes = 4096
 
+    private let maximumLineBytes: Int
     private var buffer = Data()
     private var isSkippingOverflow = false
+
+    init(maximumLineBytes: Int = GuestLineReader.maximumLineBytes) {
+        self.maximumLineBytes = maximumLineBytes
+    }
 
     /// Returns each complete line found in `chunk`, in order. A line that
     /// overflowed while buffering is silently omitted.
@@ -137,7 +142,7 @@ struct GuestLineReader {
         }
         if !isSkippingOverflow {
             buffer.append(contentsOf: chunk[start..<chunk.endIndex])
-            if buffer.count > Self.maximumLineBytes {
+            if buffer.count > maximumLineBytes {
                 buffer.removeAll(keepingCapacity: true)
                 isSkippingOverflow = true
             }
