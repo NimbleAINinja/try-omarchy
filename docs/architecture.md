@@ -170,7 +170,8 @@ dictation. A Swift bridge records the Mac microphone only while a session is
 live and recognises it with Apple's on-device `SpeechAnalyzer`, streaming
 level, partial and final events tagged with the guest's session ids. A user
 agent in the desktop session serves those sessions to the guest's dictation
-tools on `$XDG_RUNTIME_DIR/apple-dictation.sock`. The recogniser builds only
+tools on `$XDG_RUNTIME_DIR/apple-dictation.sock`, among them Apple Speech, an
+Omarchy dictation backend the user can choose. The recogniser builds only
 with the macOS 26 SDK; on macOS 15, or from an older Xcode, the app adds no
 port and shows no setting. See [host dictation](host-dictation.md).
 

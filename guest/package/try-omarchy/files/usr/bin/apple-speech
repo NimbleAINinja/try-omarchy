@@ -1,0 +1,125 @@
+#!/usr/bin/python3 -I
+"""Dictate into the focused window with Apple speech recognition on the Mac.
+
+Omarchy's `apple-speech` dictation backend (omarchy-dictation-apple-speech runs
+it for Omarchy's dictation keys). The Mac recognises the speech; this asks for
+it over $XDG_RUNTIME_DIR/apple-dictation.sock (omarchy-native-dictation-bridge,
+docs/host-dictation.md) and types the final text with wtype.
+
+    apple-speech start|stop|cancel|toggle
+
+Without the dictation port, Dictation is off in the launcher: every command
+does nothing and says nothing (start and toggle exit 1, stop and cancel 0).
+"""
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+
+PORT = os.environ.get("OMARCHY_DICTATION_PORT", "/dev/virtio-ports/dev.tryomarchy.dictation")
+SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "apple-dictation.sock")
+MODEL = "dictation"
+# The bridge starts with the desktop session; a key pressed right at login can
+# come before it listens.
+STARTING_SECONDS = 1.0
+# Longer than the bridge's own 5 s wait for the Mac, so it answers first.
+REPLY_SECONDS = 7.0
+
+
+def notify(summary, body=""):
+    try:
+        subprocess.run(["notify-send", "-a", "Apple Speech", summary, body], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def connect(wait=0.0):
+    deadline = time.monotonic() + wait
+    while True:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            connection.connect(SOCKET)
+            connection.settimeout(REPLY_SECONDS)
+            return connection
+        except OSError:
+            connection.close()
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
+def request(cmd):
+    with connect() as connection:
+        connection.sendall((json.dumps({"cmd": cmd}) + "\n").encode())
+        return json.loads(connection.makefile("rb").readline() or b"{}")
+
+
+def hold(connection):
+    """Wait for the session's end and act on it: type, explain, or nothing."""
+    connection.settimeout(None)
+    for line in connection.makefile("rb"):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        kind = event.get("event")
+        if kind == "final":
+            if event.get("text"):
+                subprocess.run(["wtype", "--", event["text"]], stdin=subprocess.DEVNULL)
+            return
+        if kind == "error":
+            notify("Dictation failed", str(event.get("message", "")))
+            return
+        if kind == "cancelled":
+            return
+
+
+def start():
+    try:
+        connection = connect(STARTING_SECONDS)
+        connection.sendall((json.dumps({"cmd": "start", "model": MODEL}) + "\n").encode())
+    except OSError:
+        notify("Apple Speech isn't answering", "Try Omarchy's dictation bridge did not respond.")
+        return 1
+    # The session is live at the bridge now, so a stop that follows at once
+    # finds it. The rest happens after this returns, as Omarchy expects.
+    if os.fork():
+        return 0
+    os.setsid()
+    null = os.open(os.devnull, os.O_RDWR)
+    for descriptor in (0, 1, 2):
+        os.dup2(null, descriptor)
+    try:
+        hold(connection)
+    except OSError:
+        pass
+    os._exit(0)
+
+
+def main():
+    command = sys.argv[1] if len(sys.argv) == 2 else ""
+    if command not in ("start", "stop", "cancel", "toggle"):
+        print("Usage: apple-speech start|stop|cancel|toggle", file=sys.stderr)
+        return 2
+    if not os.path.exists(PORT):
+        return 0 if command in ("stop", "cancel") else 1
+    if command == "toggle":
+        try:
+            command = "stop" if request("ping").get("session") else "start"
+        except (OSError, ValueError):
+            command = "start"
+    if command == "start":
+        return start()
+    try:
+        request(command)
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

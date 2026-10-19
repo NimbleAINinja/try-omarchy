@@ -56,7 +56,9 @@ not ignore, so caches and other local files never reach the package.
 - **Menu rows go through Omarchy's menu extension.** `menu-entries` adds Try
   Omarchy's rows once each and changes some of Omarchy's: the Timezone row's
   action, and the conditions that show Direct Boot, Firmware, the Wi-Fi and
-  Bluetooth restarts, the battery percentage toggle and three game rows.
+  Bluetooth restarts, the battery percentage toggle and three game rows. It
+  also offers Apple Speech under Setup > Defaults > Dictation while the
+  dictation port exists, and shows Remove > Dictation while it is chosen.
   Omarchy's merge replaces a row whole, filling every field an extension
   leaves out with a default (its menu documentation says only declared fields
   are replaced), so each changed row carries Omarchy's complete row, read from
@@ -140,6 +142,19 @@ Kitty creates a GL context on VirGL but its window stays empty, so
 way, found on the same `PATH` (Kitty's desktop entries run `kitty` by name).
 It passes `-o env=LIBGL_ALWAYS_SOFTWARE`, which leaves the variable empty,
 and so false, for programs started in Kitty.
+
+## Dictation backend
+
+`apple-speech` is an Omarchy dictation backend in Omarchy's documented form:
+`omarchy-dictation-apple-speech` for Omarchy's dictation keys, and
+`omarchy-install-dictation-apple-speech` and
+`omarchy-remove-dictation-apple-speech` behind the menu rows. It types the
+Mac's text with `wtype`, which Omarchy installs. It is never selected unless
+the user chooses it. While Dictation is off in the launcher (no
+`dev.tryomarchy.dictation`), it does nothing and says nothing, and
+`user-setup`'s `dictation-backend login` selects the backend it replaced at
+each login, putting Apple Speech back once the port returns
+([host dictation](../../docs/host-dictation.md#using-it-in-omarchy)).
 
 ## Project wallpaper
 
