@@ -7,12 +7,11 @@ as they are recognised and the final text when the key is released. Nothing
 leaves the Mac, and the microphone runs only while a recording is in progress,
 with the orange indicator showing in the Mac menu bar.
 
-The Try Omarchy side is the transport: the recogniser in the app, a
-virtio-serial port, and a guest service that serves
-`$XDG_RUNTIME_DIR/apple-dictation.sock`. The push-to-talk client that uses
-that socket (`apple-dictation`, its Omarchy dictation backend, the recording
-indicator and the live caption) is a separate project, omarchy-apple-dictation,
-installed inside Omarchy.
+Try Omarchy adds the recogniser in the app, a virtio-serial port, a guest
+service that serves `$XDG_RUNTIME_DIR/apple-dictation.sock`, and Apple Speech,
+an Omarchy dictation backend that uses it. Nothing changes in Omarchy until
+the user chooses Apple Speech in Omarchy's menu; other dictation tools can use
+the socket directly.
 
 ## Requirements
 
@@ -34,6 +33,27 @@ supports it and falls back to US English otherwise.
 removes the port at the next launch, so nothing in the guest can reach the
 recogniser. Like the other launch settings, it applies when Omarchy next
 starts.
+
+## Using it in Omarchy
+
+Choose **Setup > Defaults > Dictation > Apple Speech** in the Omarchy menu.
+The row shows only while Dictation is on. Omarchy's own dictation keys then
+use the Mac: hold Right Alt or F9 to dictate, or press Super+Ctrl+X to start
+and stop. The final text is typed into the focused window with `wtype`, and a
+problem the Mac reports (no microphone access, speech assets still
+downloading) shows as a notification. Custom bindings can run
+`apple-speech start|stop|cancel|toggle`, or `omarchy dictation start|stop|toggle`
+as for any backend. Apple Speech uses the `dictation` model.
+
+With Dictation off in the launcher, Apple Speech does nothing and says
+nothing. Omarchy binds its dictation keys whenever the selected backend's
+program is installed, which this one always is, so at each login the backend
+Apple Speech replaced is selected again instead (Voxtype, say). With none, the
+selection is cleared and Omarchy binds no dictation keys. When Dictation is on
+again, so is Apple Speech. A backend the user chooses in the meantime is kept,
+and Apple Speech stops coming back. **Remove > Dictation > Apple Speech** puts
+the replaced backend back for good. The choice is recorded in
+`~/.local/state/try-omarchy/dictation-backend`.
 
 ## Protocol
 
@@ -100,5 +120,5 @@ session with an error. If another server already answers on the socket path
   Omarchy.` or the reason it isn't.
 - In Omarchy: `ls /dev/virtio-ports/dev.tryomarchy.dictation` and
   `systemctl --user status omarchy-native-dictation-bridge`.
-- `apple-dictation status` (from omarchy-apple-dictation) times a round trip
-  through both bridges.
+- `omarchy default dictation` names the selected backend; Apple Speech is
+  `apple-speech`.
