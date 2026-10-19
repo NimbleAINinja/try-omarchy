@@ -286,6 +286,12 @@ enum StartMenuPresentation {
             : "Omarchy opens in a window with the Mac menu bar and Dock available."
     }
 
+    static func notchDetail(isEnabled: Bool) -> String {
+        isEnabled
+            ? "Full Screen fills the area beside the notch, with Omarchy’s bar around it."
+            : "Full Screen stays below the notch, like other Mac apps."
+    }
+
     static func dictationDetail(isEnabled: Bool) -> String {
         isEnabled
             ? "Apple speech recognition for Omarchy's dictation, using the Mac microphone."

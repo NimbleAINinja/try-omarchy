@@ -8,7 +8,7 @@ Run the upstream [Omarchy](https://github.com/basecamp/omarchy) desktop as a nat
 
 Try Omarchy packages a stock `aarch64` Omarchy install, a QEMU runtime using Apple Hypervisor Framework with UEFI firmware, and a small Swift/AppKit launcher into one macOS app. The factory disk is installed from Omarchy's own package repositories with Omarchy's own install steps. Everything Try Omarchy adds inside Linux is one pacman package, `try-omarchy`. Omarchy then updates itself inside the VM with `omarchy update`, kernel included. On ARM, Omarchy publishes to its `edge` channel for now.
 
-<img width="800" src="https://github.com/user-attachments/assets/1368a8f5-5099-43e4-8d3b-3d7d7fba0326" />
+<img width="1920" height="1173" alt="Try Omarchy on a MacBook Pro" src="https://github.com/user-attachments/assets/44f67c59-ba85-4819-8905-71b188bc02fe" />
 
 The Omarchy mark in the app icon is sourced from the
 [official Omarchy brand kit](https://omarchy.org/brand/) and remains subject to

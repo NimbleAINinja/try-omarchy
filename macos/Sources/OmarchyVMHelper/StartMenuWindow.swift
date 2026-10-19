@@ -177,6 +177,9 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private var networkEditor: NetworkEditor?
     private let immersiveMode: () -> Bool
     private let setImmersiveMode: (Bool) -> Void
+    private let notchAvailable: () -> Bool
+    private let usesNotch: () -> Bool
+    private let setUsesNotch: (Bool) -> Void
     private let dictationSupported: Bool
     private let dictationEnabled: () -> Bool
     private let setDictationEnabled: (Bool) -> Void
@@ -242,6 +245,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private(set) var usbDeviceEditor: USBDeviceEditor?
     private(set) var storageEditor: VMStorageEditor?
     private weak var immersiveCaption: NSTextField?
+    private weak var notchCaption: NSTextField?
     private weak var dictationCaption: NSTextField?
     private var accessibilityRow: StartMenuPermissionRow?
     private var microphoneRow: StartMenuPermissionRow?
@@ -285,6 +289,9 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         networkIdentity: VMNetworkIdentityAccess = .unavailable,
         immersiveMode: @escaping () -> Bool = { true },
         setImmersiveMode: @escaping (Bool) -> Void = { _ in },
+        notchAvailable: @escaping () -> Bool = { false },
+        usesNotch: @escaping () -> Bool = { true },
+        setUsesNotch: @escaping (Bool) -> Void = { _ in },
         dictationSupported: Bool = false,
         dictationEnabled: @escaping () -> Bool = { false },
         setDictationEnabled: @escaping (Bool) -> Void = { _ in },
@@ -331,6 +338,9 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         self.networkIdentity = networkIdentity
         self.immersiveMode = immersiveMode
         self.setImmersiveMode = setImmersiveMode
+        self.notchAvailable = notchAvailable
+        self.usesNotch = usesNotch
+        self.setUsesNotch = setUsesNotch
         self.dictationSupported = dictationSupported
         self.dictationEnabled = dictationEnabled
         self.setDictationEnabled = setDictationEnabled
@@ -883,6 +893,10 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
             minimumHeight: 72
         ))
         integrationRowViews.append(contentsOf: [resourceRow, networkingRow, portForwardingRow, usbRow, immersiveRow])
+        // Only a MacBook with a camera notch has the strip to use.
+        if notchAvailable() {
+            integrationRowViews.append(notchSettingRow(isEnabled: usesNotch()))
+        }
         if dictationSupported {
             integrationRowViews.append(dictationSettingRow(isEnabled: dictationEnabled()))
         }
@@ -1402,6 +1416,20 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         return setting.row
     }
 
+    private func notchSettingRow(isEnabled: Bool) -> NSView {
+        let setting = toggleSettingRow(
+            titleText: "Camera notch",
+            detailText: StartMenuPresentation.notchDetail(isEnabled: isEnabled),
+            symbolName: "macbook",
+            identifier: "camera-notch",
+            accessibilityLabel: "Use the area beside the camera notch",
+            isEnabled: isEnabled,
+            action: #selector(changeNotchMode(_:))
+        )
+        notchCaption = setting.caption
+        return setting.row
+    }
+
     private func dictationSettingRow(isEnabled: Bool) -> NSView {
         let setting = toggleSettingRow(
             titleText: "Dictation",
@@ -1763,6 +1791,24 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         setImmersiveMode(isEnabled)
         let detailText = StartMenuPresentation.immersiveDetail(isEnabled: isEnabled)
         immersiveCaption?.stringValue = detailText
+        (sender as? OmarchyToggleButton)?.refreshAppearance()
+        sender.setAccessibilityHelp(detailText)
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: detailText,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
+        )
+    }
+
+    @objc private func changeNotchMode(_ sender: NSButton) {
+        guard !controlsBusy, !resetInProgress else { return }
+        let isEnabled = sender.state == .on
+        setUsesNotch(isEnabled)
+        let detailText = StartMenuPresentation.notchDetail(isEnabled: isEnabled)
+        notchCaption?.stringValue = detailText
         (sender as? OmarchyToggleButton)?.refreshAppearance()
         sender.setAccessibilityHelp(detailText)
         NSAccessibility.post(

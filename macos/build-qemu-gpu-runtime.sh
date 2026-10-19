@@ -7,7 +7,7 @@ usage() {
 Usage: macos/build-qemu-gpu-runtime.sh [--archive-dir DIR]
 
 Build the pinned QEMU/VirGL source stack for macOS 15.0 with Try Omarchy's Cocoa identity,
-dynamic-display, immersive-mode, pause-ownership, pinch-zoom, and ISO
+dynamic-display, immersive-mode, notch, pause-ownership, pinch-zoom, and ISO
 keyboard patches, then relocate, sign, validate, and
 atomically stage it at:
   macos/.build/qemu-gpu-runtime
@@ -75,6 +75,7 @@ strchrnul_patch="$native_dir/patches/qemu-darwin-strchrnul-compat.patch"
 usb_exact_bus_patch="$native_dir/patches/qemu-usb-host-exact-bus.patch"
 minimum_guest_size_patch="$native_dir/patches/qemu-cocoa-minimum-guest-size.patch"
 no_app_nap_patch="$native_dir/patches/qemu-cocoa-no-app-nap.patch"
+notch_patch="$native_dir/patches/qemu-cocoa-notch.patch"
 hda_no_catch_up_patch="$native_dir/patches/qemu-hda-no-catch-up.patch"
 audio_capture_thread_patch="$native_dir/patches/qemu-sdl-audio-capture-thread.patch"
 audio_playback_thread_patch="$native_dir/patches/qemu-sdl-audio-playback-thread.patch"
@@ -117,16 +118,19 @@ strchrnul_patch_sha256=ec1048dd0e8ebe53bf7e8a3bca9bf2f5f4336cd607d4cd077437470e9
 usb_exact_bus_patch_sha256=5e39159171295c566d014a1ef2744130f80fa02b742c349fa47373b00ae697ec
 minimum_guest_size_patch_sha256=f01e20999bf87821639c93f3489eb093b292c48b107a14ba4fbdad5cbf5840a5
 no_app_nap_patch_sha256=af5f7c5c04da1293dcfcd752c60bfd258357bd72427492ea81c834ededa39967
+notch_patch_sha256=6b1a6bc134023ee9136d8b077f9663ed67259cb765653a2aaa63a5e31fb6d1c9
 hda_no_catch_up_patch_sha256=01c72ca75e8ce8f3eb21541468e87ee29b96488bd4579c14a93836f6cf056a43
 audio_capture_thread_patch_sha256=1e8c71480829985091a583cba2da7eb4cb5137e21632a5f20811d40c0080d3ce
 audio_playback_thread_patch_sha256=66792195f69c517854970688172b7cc87bc6cfb0f4ad13334ec274db12eac473
 main_loop_qos_patch_sha256=a8e7dbdf602b9451123fe55a6a714c816dbcc5c94811d85dbbaedda473647e49
 udp_patch_sha256=95e8ee890be78cdce70b3ee54a8adac27be02421be08b986ae987c74ef8cec8c
 slirp_patch_sha256=20f3d424c79929fb82d240d0ee06b99e9f93ecfb9460579dc414303820d59f90
-slirp_source_root=libslirp-v4.9.4
+# Pin the commit behind v4.9.4 so a moved tag cannot change the source archive.
+slirp_commit=d09dc9a70360ee7838acccbd234ab83f3b9b37a5
+slirp_source_root="libslirp-$slirp_commit"
 slirp_archive_name="$slirp_source_root.tar.gz"
-slirp_url="https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.9.4/$slirp_archive_name"
-slirp_sha256=3998863b020aeda34bddc567097c6efba55a78cdf6eeee6bcd42c11ef23967da
+slirp_url="https://gitlab.freedesktop.org/slirp/libslirp/-/archive/$slirp_commit/$slirp_archive_name"
+slirp_sha256=3ede9d4a09028d14fd7089ba0dc2438e3515300b43f23dba1db5ba94574bf512
 meson_root=meson-1.9.0
 meson_archive_name="$meson_root.tar.gz"
 meson_url="https://github.com/mesonbuild/meson/releases/download/1.9.0/$meson_archive_name"
@@ -171,14 +175,18 @@ pip_sha256=71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e
 
 # Build the same renderer and patches as the 1.0.42 bottle, targeting 15.0.
 # The published bottle targets Tahoe; lowering only QEMU's target is insufficient.
-virgl_source_root=virglrenderer-1.3.0
+# Pin the commit behind 1.3.0, keeping the renderer source independent of its tag.
+virgl_commit=ca50e008863837e094747a69974dde3ae148aeaa
+virgl_source_root="virglrenderer-$virgl_commit"
 virgl_archive_name="$virgl_source_root.tar.gz"
-virgl_url="https://gitlab.freedesktop.org/virgl/virglrenderer/-/archive/1.3.0/$virgl_archive_name"
-virgl_sha256=065bc56e89e6f631f96101cd62eba0748e48eb888b434edc86e89d05395e76f3
-virgl_tap_root=homebrew-virglrenderer-1.0.42
+virgl_url="https://gitlab.freedesktop.org/virgl/virglrenderer/-/archive/$virgl_commit/$virgl_archive_name"
+virgl_sha256=e7c512469a207444103ead88a8992a7077173e21771623845d4567f8128b5dc1
+# The tap's v1.0.42 tag moves when its CI changes, so pin the commit.
+virgl_tap_commit=e7daef144d249a38d6206153e6146539f893eae2
+virgl_tap_root="homebrew-virglrenderer-$virgl_tap_commit"
 virgl_tap_archive_name="$virgl_tap_root.tar.gz"
-virgl_tap_url="https://codeload.github.com/startergo/homebrew-virglrenderer/tar.gz/refs/tags/v1.0.42"
-virgl_tap_sha256=950273fbba46905b6112ee2bd0598c1da706c25319a7347058cbc52f04ba96dd
+virgl_tap_url="https://codeload.github.com/startergo/homebrew-virglrenderer/tar.gz/$virgl_tap_commit"
+virgl_tap_sha256=6954b95a223b31dad4a08583f2d0d17c5e8daa87ff3be43ba84aee6c359d8ea2
 pyyaml_root=pyyaml-6.0.3
 pyyaml_archive_name="$pyyaml_root.tar.gz"
 pyyaml_url="https://files.pythonhosted.org/packages/05/8e/961c0007c59b8dd7729d542c61a4d537767a59645b82a0b521206e1e25c2/$pyyaml_archive_name"
@@ -256,6 +264,8 @@ macos_major=$(sw_vers -productVersion | awk -F. '{ print $1 }')
   die "missing Cocoa minimum guest size patch: $minimum_guest_size_patch"
 [[ -f $no_app_nap_patch && ! -L $no_app_nap_patch ]] || \
   die "missing Cocoa App Nap patch: $no_app_nap_patch"
+[[ -f $notch_patch && ! -L $notch_patch ]] || \
+  die "missing Cocoa notch patch: $notch_patch"
 [[ -f $hda_no_catch_up_patch && ! -L $hda_no_catch_up_patch ]] || \
   die "missing HDA no-catch-up pacing patch: $hda_no_catch_up_patch"
 [[ -f $audio_capture_thread_patch && ! -L $audio_capture_thread_patch ]] || \
@@ -498,6 +508,8 @@ verify_file_sha "Try Omarchy Cocoa minimum guest size patch" \
   "$minimum_guest_size_patch" "$minimum_guest_size_patch_sha256"
 verify_file_sha "Try Omarchy Cocoa App Nap patch" \
   "$no_app_nap_patch" "$no_app_nap_patch_sha256"
+verify_file_sha "Try Omarchy Cocoa notch patch" \
+  "$notch_patch" "$notch_patch_sha256"
 verify_file_sha "Try Omarchy HDA no-catch-up pacing patch" \
   "$hda_no_catch_up_patch" "$hda_no_catch_up_patch_sha256"
 verify_file_sha "Try Omarchy SDL audio capture-thread patch" \
@@ -507,7 +519,7 @@ verify_file_sha "Try Omarchy SDL audio playback-thread patch" \
 verify_file_sha "Try Omarchy Darwin main-loop QoS patch" \
   "$main_loop_qos_patch" "$main_loop_qos_patch_sha256"
 
-log "Applying the exact render, identity, display, immersive, pause-ownership, audio, folder, Darwin compatibility, memory reclaim, pinch, precise-scroll, ISO keyboard, USB exact-bus, minimum guest size, App Nap, audio pacing and threading, and main-loop QoS patches"
+log "Applying the exact render, identity, display, immersive, pause-ownership, audio, folder, Darwin compatibility, memory reclaim, pinch, precise-scroll, ISO keyboard, USB exact-bus, minimum guest size, App Nap, audio pacing and threading, main-loop QoS, and notch patches"
 patch -d "$source_dir" -p1 -f -i "$texture_patch"
 patch -d "$source_dir" -p1 -f -i "$gpu_fix_patch"
 patch -d "$source_dir" -p1 -f -i "$identity_patch"
@@ -536,6 +548,7 @@ patch -d "$source_dir" -p1 -f -i "$usb_exact_bus_patch"
 patch -d "$source_dir" -p1 -f -i "$minimum_guest_size_patch"
 patch -d "$source_dir" -p1 -f -i "$no_app_nap_patch"
 patch -d "$source_dir" -p1 -f -i "$main_loop_qos_patch"
+patch -d "$source_dir" -p1 -f -i "$notch_patch"
 
 virgl_root="$dependency_root/virglrenderer/$virgl_version"
 angle_root="$dependency_root/angle/$angle_version"
