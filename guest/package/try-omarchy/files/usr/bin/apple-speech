@@ -7,9 +7,15 @@ it over $XDG_RUNTIME_DIR/apple-dictation.sock (omarchy-native-dictation-bridge,
 docs/host-dictation.md) and types the final text with wtype.
 
     apple-speech start|stop|cancel|toggle
+    apple-speech model [speech|dictation]
 
 Without the dictation port, Dictation is off in the launcher: every command
 does nothing and says nothing (start and toggle exit 1, stop and cancel 0).
+
+The Mac has two recognisers: `dictation` (DictationTranscriber, the default)
+and `speech` (SpeechTranscriber). `model` shows the one in use or chooses it;
+the choice lives in $XDG_CONFIG_HOME/apple-speech/model and is read at each
+start.
 """
 
 import json
@@ -21,7 +27,9 @@ import time
 
 PORT = os.environ.get("OMARCHY_DICTATION_PORT", "/dev/virtio-ports/dev.tryomarchy.dictation")
 SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "apple-dictation.sock")
-MODEL = "dictation"
+MODELS = ("dictation", "speech")
+MODEL_SETTING = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                             "apple-speech", "model")
 # The bridge starts with the desktop session; a key pressed right at login can
 # come before it listens.
 STARTING_SECONDS = 1.0
@@ -35,6 +43,29 @@ def notify(summary, body=""):
                        stderr=subprocess.DEVNULL, timeout=5)
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+def current_model():
+    """The chosen recogniser; a missing or unknown setting means the default."""
+    try:
+        with open(MODEL_SETTING) as setting:
+            chosen = setting.read().strip()
+    except OSError:
+        return MODELS[0]
+    return chosen if chosen in MODELS else MODELS[0]
+
+
+def model(arguments):
+    if not arguments:
+        print(current_model())
+        return 0
+    if len(arguments) != 1 or arguments[0] not in MODELS:
+        print("Usage: apple-speech model [speech|dictation]", file=sys.stderr)
+        return 2
+    os.makedirs(os.path.dirname(MODEL_SETTING), exist_ok=True)
+    with open(MODEL_SETTING, "w") as setting:
+        setting.write(arguments[0] + "\n")
+    return 0
 
 
 def connect(wait=0.0):
@@ -81,7 +112,7 @@ def hold(connection):
 def start():
     try:
         connection = connect(STARTING_SECONDS)
-        connection.sendall((json.dumps({"cmd": "start", "model": MODEL}) + "\n").encode())
+        connection.sendall((json.dumps({"cmd": "start", "model": current_model()}) + "\n").encode())
     except OSError:
         notify("Apple Speech isn't answering", "Try Omarchy's dictation bridge did not respond.")
         return 1
@@ -101,9 +132,11 @@ def start():
 
 
 def main():
+    if sys.argv[1:2] == ["model"]:
+        return model(sys.argv[2:])
     command = sys.argv[1] if len(sys.argv) == 2 else ""
     if command not in ("start", "stop", "cancel", "toggle"):
-        print("Usage: apple-speech start|stop|cancel|toggle", file=sys.stderr)
+        print("Usage: apple-speech start|stop|cancel|toggle|model [speech|dictation]", file=sys.stderr)
         return 2
     if not os.path.exists(PORT):
         return 0 if command in ("stop", "cancel") else 1

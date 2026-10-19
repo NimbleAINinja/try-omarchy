@@ -43,7 +43,13 @@ and stop. The final text is typed into the focused window with `wtype`, and a
 problem the Mac reports (no microphone access, speech assets still
 downloading) shows as a notification. Custom bindings can run
 `apple-speech start|stop|cancel|toggle`, or `omarchy dictation start|stop|toggle`
-as for any backend. Apple Speech uses the `dictation` model.
+as for any backend.
+
+Apple Speech uses the `dictation` model (DictationTranscriber) unless told
+otherwise. `apple-speech model speech` switches to SpeechTranscriber, Apple's
+newer general-purpose recogniser; `apple-speech model dictation` switches
+back, and `apple-speech model` shows the one in use. The choice is kept in
+`~/.config/apple-speech/model` and applies from the next recording.
 
 With Dictation off in the launcher, Apple Speech does nothing and says
 nothing. Omarchy binds its dictation keys whenever the selected backend's

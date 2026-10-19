@@ -1545,6 +1545,7 @@ class AppleSpeech(unittest.TestCase):
         self.bin = root / "bin"
         self.bin.mkdir()
         self.log = root / "log"
+        self.config = root / "config"
         fake_tools(self.bin, "wtype", "notify-send")
         self.bridge = None
 
@@ -1559,9 +1560,15 @@ class AppleSpeech(unittest.TestCase):
 
     def run_client(self, *args):
         env = {**os.environ, "XDG_RUNTIME_DIR": self.runtime.name, "OMARCHY_DICTATION_PORT": str(self.port),
-               "PATH": f"{self.bin}:{os.environ['PATH']}", "TEST_LOG": str(self.log)}
+               "XDG_CONFIG_HOME": str(self.config), "PATH": f"{self.bin}:{os.environ['PATH']}",
+               "TEST_LOG": str(self.log)}
         return subprocess.run([sys.executable, str(self.CLIENT), *args], env=env, capture_output=True, text=True,
                               timeout=10)
+
+    def set_model(self, text):
+        setting = self.config / "apple-speech/model"
+        setting.parent.mkdir(parents=True, exist_ok=True)
+        setting.write_text(text)
 
     def logged(self, timeout=3.0):
         deadline = time.monotonic() + timeout
@@ -1644,6 +1651,33 @@ class AppleSpeech(unittest.TestCase):
         self.run_client("start")
         bridge.finish(bridge.owners[0], event="cancelled")
         self.assertEqual(self.logged(timeout=0.5), [])
+
+    def test_starts_with_the_chosen_model(self):
+        self.set_model("speech\n")
+        bridge = self.serve()
+        self.assertEqual(self.run_client("start").returncode, 0)
+        self.assertEqual(bridge.commands[:1], [{"cmd": "start", "model": "speech"}])
+
+    def test_an_unknown_model_falls_back_to_dictation(self):
+        self.set_model("whisper\n")
+        bridge = self.serve()
+        self.assertEqual(self.run_client("start").returncode, 0)
+        self.assertEqual(bridge.commands[:1], [{"cmd": "start", "model": "dictation"}])
+
+    def test_model_command_shows_and_sets_the_model(self):
+        # Works with Dictation off too: it only touches the setting.
+        self.port.unlink()
+        shown = self.run_client("model")
+        self.assertEqual((shown.returncode, shown.stdout), (0, "dictation\n"))
+        self.assertEqual(self.run_client("model", "speech").returncode, 0)
+        self.assertEqual((self.config / "apple-speech/model").read_text(), "speech\n")
+        self.assertEqual(self.run_client("model").stdout, "speech\n")
+
+    def test_model_command_refuses_an_unknown_model(self):
+        result = self.run_client("model", "whisper")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("speech|dictation", result.stderr)
+        self.assertFalse((self.config / "apple-speech/model").exists())
 
     def test_omarchy_adapter_passes_its_commands_through(self):
         adapter = FILES / "usr/bin/omarchy-dictation-apple-speech"
