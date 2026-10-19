@@ -1172,8 +1172,8 @@ class DictationBridge(unittest.TestCase):
         self.assertEqual(self.host_read()["type"], "start")
         self.assertEqual(self.read_events(self.request(cmd="stop"), 1), [{"ok": True}, "EOF"])
         self.assertEqual(self.host_read(), {"type": "stop", "session": 1})
-        # Stop handed session 1 to finishing; as in the prototype, a cancel
-        # now has no live session to act on.
+        # Stop handed session 1 to finishing, so a cancel now has no live
+        # session to act on.
         self.assertEqual(self.read_events(self.request(cmd="cancel"), 1), [{"ok": True}, "EOF"])
         self.assertIsNone(self.host_read(timeout=0.5))
         self.request(cmd="start")

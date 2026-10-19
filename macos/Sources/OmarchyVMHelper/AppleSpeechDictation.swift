@@ -5,10 +5,9 @@ import Foundation
 import Speech
 
 /// Push-to-talk recognition of the Mac microphone with Apple's on-device
-/// SpeechAnalyzer, ported from the omarchy-apple-dictation prototype. The
-/// microphone runs only while a session is live, and every command runs on
-/// one queue in arrival order, so a stop can never overtake the start it
-/// belongs to however long that start takes to set up.
+/// SpeechAnalyzer. The microphone runs only while a session is live, and every
+/// command runs on one queue in arrival order, so a stop can never overtake the
+/// start it belongs to however long that start takes to set up.
 @available(macOS 26, *)
 final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
     /// Audio kept after the stop: people let go of the key on the last
@@ -263,7 +262,7 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
         current.events(.processing)
         try? await Task.sleep(nanoseconds: Self.tailMilliseconds * 1_000_000)
         stopMicrophone()
-        // Timed from here, as in the prototype, so the numbers compare.
+        // Timed from the end of the audio: the recogniser's own finishing time.
         let started = Self.milliseconds()
         current.input.finish()
         do {

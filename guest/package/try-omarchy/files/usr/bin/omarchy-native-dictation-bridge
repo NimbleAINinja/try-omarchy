@@ -3,8 +3,7 @@
 
 The Mac recognises the speech (Apple's SpeechAnalyzer, docs/host-dictation.md)
 and the guest's dictation tools talk to $XDG_RUNTIME_DIR/apple-dictation.sock
-with one connection per command, as the apple-dictation prototype
-defined it:
+with one connection per command:
 
     {"cmd":"start","model":"speech"|"dictation"}  stays open for the events:
         {"event":"recording"}, {"event":"level","v":0..1},
@@ -357,7 +356,7 @@ def main() -> int:
         return 1
     listener = listen(path)
     if listener is None:
-        log(f"another apple-dictation server already answers on {path}")
+        log(f"another server already answers on {path}")
         os.close(port)
         return 0
     try:

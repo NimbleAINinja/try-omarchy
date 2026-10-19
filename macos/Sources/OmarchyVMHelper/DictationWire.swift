@@ -1,7 +1,7 @@
 import Foundation
 
 /// The two recognisers the guest can ask for. Anything but "dictation" is
-/// the general SpeechTranscriber, as in the omarchy-apple-dictation prototype.
+/// the general SpeechTranscriber.
 enum DictationModel: String, Equatable, Sendable {
     case speech
     case dictation
