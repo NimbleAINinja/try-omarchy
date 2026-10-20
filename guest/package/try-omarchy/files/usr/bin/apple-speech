@@ -90,7 +90,6 @@ def request(cmd):
 
 
 def hold(connection):
-    """Wait for the session's end and act on it: type, explain, or nothing."""
     connection.settimeout(None)
     for line in connection.makefile("rb"):
         try:

@@ -87,8 +87,6 @@ class Bridge:
         self.selector.register(listener, selectors.EVENT_READ, "listener")
         self.selector.register(port, selectors.EVENT_READ, "port")
 
-    # --- the port -----------------------------------------------------------
-
     def to_host(self, message: dict[str, Any]) -> None:
         self.outgoing += encode(message)
         self.selector.modify(self.port, selectors.EVENT_READ | selectors.EVENT_WRITE, "port")
@@ -157,8 +155,6 @@ class Bridge:
             self.close(owner)
         else:
             self.sessions[session] = (owner, time.monotonic() + SESSION_SECONDS)
-
-    # --- the guest's tools --------------------------------------------------
 
     def accept(self) -> None:
         try:
@@ -255,8 +251,6 @@ class Bridge:
         except (KeyError, ValueError):
             pass
         client.connection.close()
-
-    # --- the loop -----------------------------------------------------------
 
     def expire(self) -> None:
         now = time.monotonic()

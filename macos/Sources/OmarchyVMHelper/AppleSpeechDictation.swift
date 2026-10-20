@@ -58,7 +58,6 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
         }
         let requested = locale
         Task { [weak self] in
-            // The guest's locale when Apple's recogniser has an equivalent.
             let resolved = await SpeechTranscriber.supportedLocale(equivalentTo: requested)
                 ?? Locale(identifier: DictationLocale.fallback)
             self?.setLocale(resolved)

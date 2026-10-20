@@ -96,10 +96,11 @@ know about. Either side can therefore be updated first.
 - The user-facing ports (audio, clipboard, camera, settings, dictation) and the
   camera loopback device carry `TAG+="uaccess"`. logind grants them to whoever
   holds the active session. Omarchy's owner provisioning does not add the owner
-  to `audio`, `video` or `users`. Audio, camera, clipboard and dictation bridges follow
-  `graphical-session.target`, so provisioning and SSH user managers do not
-  compete with the desktop for the host ports. Package upgrades move enabled
-  global audio and camera units to that target, preserving disabled units.
+  to `audio`, `video` or `users`. Audio, camera, clipboard and dictation
+  bridges follow `graphical-session.target`, so provisioning and SSH user
+  managers do not compete with the desktop for the host ports. Package
+  upgrades move enabled global audio and camera units to that target,
+  preserving disabled units.
 - With SSH forwarded, `try-omarchy-ssh-access` starts sshd for that boot. It
   also allows port 22 through Omarchy's ufw firewall: from the NAT gateway
   `10.0.2.2`, or from anywhere when the VM is bridged
@@ -151,16 +152,7 @@ and so false, for programs started in Kitty.
 
 ## Dictation backend
 
-`apple-speech` is an Omarchy dictation backend in Omarchy's documented form:
-`omarchy-dictation-apple-speech` for Omarchy's dictation keys, and
-`omarchy-install-dictation-apple-speech` and
-`omarchy-remove-dictation-apple-speech` behind the menu rows. It types the
-Mac's text with `wtype`, which Omarchy installs. It is never selected unless
-the user chooses it. While Dictation is off in the launcher (no
-`dev.tryomarchy.dictation`), it does nothing and says nothing, and
-`user-setup`'s `dictation-backend login` selects the backend it replaced at
-each login, putting Apple Speech back once the port returns
-([host dictation](../../docs/host-dictation.md#using-it-in-omarchy)).
+`apple-speech` is an Omarchy dictation backend in Omarchy's documented form: `omarchy-dictation-apple-speech` for Omarchy's dictation keys, and `omarchy-install-dictation-apple-speech` and `omarchy-remove-dictation-apple-speech` behind the menu rows. It types the Mac's text with `wtype`, which Omarchy installs. It's never selected unless the user chooses it. While Dictation is off in the launcher, it does nothing and says nothing, and at each login the backend it replaced is selected instead. Apple Speech comes back once the port returns ([host dictation](../../docs/host-dictation.md#using-it-in-omarchy)).
 
 ## Project wallpaper
 
