@@ -56,7 +56,7 @@ index 6be4717..44c2560 100644
      "              [,full-screen=on|off][,zoom-to-fit=on|off]\n"
  #endif
 diff --git a/ui/cocoa.m b/ui/cocoa.m
-index 50975e2..2af9132 100644
+index 4953dea..7dc23ee 100644
 --- a/ui/cocoa.m
 +++ b/ui/cocoa.m
 @@ -360,6 +360,54 @@ - (void) raiseAllKeys;
@@ -132,18 +132,18 @@ index 50975e2..2af9132 100644
      NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
      if (getenv("TRYOMARCHY_INPUT_OBSERVE_ONLY")) {
          [view isKeyboardCaptured];
-@@ -1072,6 +1131,11 @@ - (bool) handleEventLocked:(NSEvent *)event
-         case NSEventTypeKeyDown:
-             keycode = cocoa_keycode_to_linux([event keyCode]);
+@@ -1079,6 +1138,11 @@ - (bool) handleEventLocked:(NSEvent *)event
+                 return false;
+             }
  
 +            // Host keys stay with macOS even when they reach our key window rather than the tap.
 +            if (cocoa_is_host_key([event keyCode])) {
 +                return false;
 +            }
 +
-             // Keep Command chords with the host unless the focused guest
-             // captured the keyboard.
-             if (![self isKeyboardCaptured] &&
+             // default
+ 
+             // handle control + alt Key Combos (ctrl+alt+[1..9,g] is reserved for QEMU)
 @@ -1110,6 +1174,10 @@ - (bool) handleEventLocked:(NSEvent *)event
          case NSEventTypeKeyUp:
              keycode = cocoa_keycode_to_linux([event keyCode]);
@@ -155,15 +155,15 @@ index 50975e2..2af9132 100644
              // don't pass the guest a spurious key-up if we treated this
              // command-key combo as a host UI action
              if (![self isKeyboardCaptured] &&
-@@ -2676,6 +2744,11 @@ static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
-                         opts->u.cocoa.full_grab;
-     immersive_mode_enabled = !opts->u.cocoa.has_immersive ||
-                              opts->u.cocoa.immersive;
+@@ -2672,6 +2740,11 @@ static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
+         dcl.ops = &dcl_ops;
+     }
+ 
 +    if (opts->u.cocoa.host_keys &&
 +        !cocoa_parse_host_keys(opts->u.cocoa.host_keys, cocoa_host_keys)) {
 +        error_report("cocoa: host-keys must be keycodes 0-255 separated by ':'");
 +        exit(1);
 +    }
- 
-     /* if fullscreen mode is to be used */
-     if (opts->has_full_screen && opts->full_screen) {
+     full_grab_enabled = opts->u.cocoa.has_full_grab &&
+                         opts->u.cocoa.full_grab;
+     immersive_mode_enabled = !opts->u.cocoa.has_immersive ||

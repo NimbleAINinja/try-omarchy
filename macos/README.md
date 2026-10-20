@@ -103,18 +103,18 @@ Normal app launches and `make run` maintain one VM under
 store in `shell/`, and the decompressed factory, kept once per factory, in
 `shell-factory/` (see [VM storage](../docs/architecture.md#vm-storage)). The
 VM boots its own kernel through UEFI and Limine and updates itself, so app
-updates reuse the disk as it is. Use `make reset` to replace it with the
-current factory or `make run-ephemeral` to test that factory without retaining
+updates reuse the disk as it is. Use `make reset` to open **Manage VMs** and
+confirm moving it to Trash, so the next launch uses the current factory, or `make run-ephemeral` to test that factory without retaining
 its disk. VMs left by earlier direct-boot versions (`disks/`, `boot/`) are
 ignored.
 
-Reset Omarchy is a confirmed, user-facing flow.
-That destructive flow keeps **Reset** disabled until the user types
-`Try Omarchy` exactly in a native sheet. Cancelling or dismissing the sheet
-returns control without invoking the storage reset. During reset, the disabled
-button names the current phase: checking the VM, deleting it, then finishing
-the reset. The next launch prepares a new disk if needed, with its button
-showing checking, image preparation, setup, and startup phases.
+**Virtual Machine → Reset Settings…** asks once, then returns every launcher
+setting (resources, networking, port forwarding, shared folder, USB device,
+audio routing, Immersive Mode, Camera Notch, keyboard routing, Skip launcher) to its default. It
+keeps the VM, the selected VM folder, and permission choices. Starting over
+from the factory is **Manage… → Delete VM…**, described below. The next launch
+prepares a new disk if needed, with its button showing checking, image
+preparation, setup, and startup phases.
 Phase changes come from the launcher process and are also announced to VoiceOver.
 
 The launcher's **Selected VM → Manage…** sheet shows the current selection,
@@ -129,22 +129,24 @@ binds it to the source displayed in the sheet, holds the launcher's lock on
 `shell-factory/` cache, and verifies every file with SHA-256
 before atomic publication. Structured stderr records report copy phases and
 actual hashed-byte verification progress. The sheet remains open, disables
-Done and selection while busy, and displays errors or the final selected and
-recovery paths inline. The original is retained; the preference changes only
-on success. APFS clones are used on the same volume, and sparse copying across
+Done and selection while busy, and displays errors or the final selected path
+inline. The preference changes only on success; the sheet then moves the
+original workspace to Trash with `--trash-vm`, after the user confirmed the
+move up front. APFS clones are used on the same volume, and sparse copying across
 volumes. Both locations must be local APFS folders. Symlinks, hard links,
 special files, occupied destinations, and changes during copying are refused.
 
-**Delete VM…** uses the same danger styling and typed `Try Omarchy` confirmation
-as Reset, and confirms the exact selected folder and moves its complete workspace
-into macOS Trash under the same launcher lock. It keeps other VM copies and
-refuses a running or changed VM. The folder remains selected, so choose another
-VM or an empty folder afterward. Trash errors never trigger permanent removal.
+**Delete VM…** asks once, then runs `--trash-vm SOURCE CONFIRMED_IDENTITY`,
+which holds the launcher lock, refuses a running or changed VM, and moves the
+complete workspace to macOS Trash, so Finder's **Put Back** restores it. No
+typed confirmation is needed because nothing is removed permanently; Trash
+errors never fall back to deletion. In the default folder the next launch
+creates a fresh VM; a custom folder must be replaced by another VM or an empty
+folder.
 
 The choice is stored in `UserDefaults` and published to the launcher as
 `OMARCHY_QEMU_GPU_STATE_ROOT`. An inherited value still wins and disables
-location changes in the launcher. Reset composes its environment exactly as launch
-does, so it always erases the workspace the user is actually running.
+location changes in the launcher.
 
 **Skip launcher** is stored in the versioned `launcher-settings.json` file at
 that workspace's root (normally `~/Library/Application Support/Try Omarchy/VM/v1`).
@@ -154,12 +156,10 @@ Skip launcher again. Release and development apps using the same workspace
 share this choice. Selecting another workspace uses that workspace's setting.
 A choice made before the first VM starts is held in memory and saved after the
 storage backend initializes the workspace. Missing persistent disks and
-`--ephemeral` sessions always show the launcher. Factory Reset preserves the
-workspace setting, but the missing disk forces the next launch through the
-launcher; deleting the whole workspace removes the setting too.
+`--ephemeral` sessions always show the launcher. Deleting the whole workspace
+removes the setting too, and **Reset Settings…** turns it off.
 
-Reset deletes the VM's disk, variable store and status without creating a
-replacement. A release app first downloads the compressed factory into
+A release app first downloads the compressed factory into
 `shell-factory/` when a new VM needs it (`FactoryImageDownload.swift`, see
 [VM storage](../docs/architecture.md#vm-storage)); development builds carry it.
 To test the download with a development build, pass

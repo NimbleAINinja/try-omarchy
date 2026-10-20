@@ -44,6 +44,7 @@ cat >"$app/Contents/MacOS/omarchy-vm-helper" <<'SH'
 #!/bin/bash
 case $1 in
   --host-keyboard-geometry) echo jis ;;
+  --host-display-cutouts) printf '%s\n' "${FAKE_DISPLAY_CUTOUTS-3024x1964:64,2048x1330:44}" ;;
   --host-timezone) echo America/Sao_Paulo ;;
   --sparsify) exit 0 ;;
   *) exit 1 ;;
@@ -138,14 +139,15 @@ assert_contains "$output" "if=pflash,format=raw,readonly=on,file=$resources/firm
 assert_contains "$output" "if=pflash,format=raw,file=$state/shell/efi-vars.fd"
 assert_not_contains "$output" " -kernel "
 assert_not_contains "$output" " -append "
-host_settings='omarchy.qemu_virgl=1 omarchy.virgl_dual_source=1 tryomarchy.ssh_access=1 tryomarchy.keyboard=jis tryomarchy.locale=ja_JP.UTF-8 tryomarchy.timezone=America/Sao_Paulo'
+host_settings='omarchy.qemu_virgl=1 omarchy.virgl_dual_source=1 tryomarchy.ssh_access=1 tryomarchy.keyboard=jis tryomarchy.display_cutouts=3024x1964:64,2048x1330:44 tryomarchy.locale=ja_JP.UTF-8 tryomarchy.timezone=America/Sao_Paulo'
 assert_contains "$output" "host settings: $host_settings"
 assert_contains "$output" "io.systemd.credential.binary:tryomarchy.host=$(printf '%s' "$host_settings" | base64 | tr -d '\n')"
 package=$(printf '%s' try-omarchy-0.2.0-1-aarch64.pkg.tar.zst | base64 | tr -d '\n')
 assert_contains "$output" "io.systemd.credential.binary:tryomarchy.package=$package"
 assert_contains "$output" "mount_tag=tryomarchy-packages"
 assert_contains "$output" "hostfwd=tcp:127.0.0.1:2222-:22"
-assert_contains "$output" "Nested virtualization is unavailable"
+assert_contains "$output" "Nested virtualization is off"
+assert_not_contains "$output" "virtualization=on"
 assert_contains "$output" "-add-fd fd=9,set=77,opaque=omarchy-persistent-lock"
 # The app accepts only this QMP path shape (QEMUGPULauncher.qmpSocketPath).
 [[ $output =~ unix:/tmp/omarchy-qemu-gpu\.[A-Za-z0-9]{6}/qmp\.sock, ]] || fail "the QMP socket path is not one the app accepts"
@@ -166,6 +168,19 @@ done
 [[ $(<"$state/.omarchy-qemu-storage") == omarchy-qemu-storage-root-v1 ]] || fail "no storage-root marker"
 qemu_ran && fail "a dry run started QEMU"
 
+# Opting in probes EL2 on macOS 26 or newer and falls back when the probe fails.
+cat >"$shims/sw_vers" <<'SH'
+#!/bin/bash
+echo 26.6.2
+SH
+chmod 755 "$shims/sw_vers"
+launch_env=(OMARCHY_QEMU_GPU_NESTED_VIRT=1)
+output=$(launch)
+assert_contains "$output" "Nested virtualization is unavailable"
+assert_not_contains "$output" "virtualization=on"
+rm "$shims/sw_vers"
+launch_env=()
+
 # QEMU's reboot, shutdown and monitor policy: one QMP controller, no debugger.
 [[ $(grep -o -- "-action reboot=reset,shutdown=poweroff" <<<"$output" | wc -l | tr -d ' ') == 1 ]] ||
   fail "QEMU must reset on reboot and power off on shutdown"
@@ -179,6 +194,24 @@ assert_not_contains "$output" "qemu-xhci"
 # Dictation, Do Not Disturb.
 assert_contains "$output" "swap-opt-cmd=off,host-keys=131:144:145:160:176:177:178 "
 assert_not_contains "$output" "media-keys="
+
+# --- the camera housing reaches the guest only from a notched Mac --------------------
+output=$(FAKE_DISPLAY_CUTOUTS= launch)
+assert_contains "$output" "host settings: omarchy.qemu_virgl=1"
+assert_not_contains "$output" "tryomarchy.display_cutouts"
+output=$(TRYOMARCHY_NOTCH=0 launch)
+assert_not_contains "$output" "tryomarchy.display_cutouts"
+# The launcher's Camera notch setting, off.
+output=$(OMARCHY_QEMU_GPU_NOTCH=0 launch)
+assert_not_contains "$output" "tryomarchy.display_cutouts"
+output=$(OMARCHY_QEMU_GPU_NOTCH=1 launch)
+assert_contains "$output" "tryomarchy.display_cutouts=3024x1964:64,2048x1330:44"
+output=$(OMARCHY_QEMU_GPU_NOTCH=yes launch) && fail "an invalid notch setting launched"
+assert_contains "$output" "OMARCHY_QEMU_GPU_NOTCH must be 0 or 1"
+output=$(FAKE_DISPLAY_CUTOUTS='3024x1964:64 tryomarchy.ssh_from=any' launch)
+assert_contains "$output" "ignoring unexpected display cutouts"
+assert_not_contains "$(grep "host settings:" <<<"$output")" "tryomarchy.display_cutouts"
+assert_not_contains "$(grep "host settings:" <<<"$output")" "ssh_from"
 
 # --- the VM persists; the package offer can be turned off --------------------------
 printf 'guest data' | dd of="$state/shell/disk.img" conv=notrunc 2>/dev/null
@@ -336,6 +369,7 @@ for setting in OMARCHY_QEMU_GPU_CPUS=2 OMARCHY_QEMU_GPU_MEMORY_MIB=1024 OMARCHY_
   OMARCHY_QEMU_GPU_DISK_GIB=0 OMARCHY_QEMU_GPU_DISK_GIB=9000 OMARCHY_QEMU_GPU_LOCALE=xx_XX.UTF-8 \
   'OMARCHY_QEMU_GPU_USB_HOST=vendorid=0x05ac,romfile=/etc/hosts' 'OMARCHY_QEMU_GPU_USB_HOST=vendorid=0x05ac -s' \
   OMARCHY_QEMU_GPU_HVF_TRACE_LOG=relative.log OMARCHY_QEMU_GPU_IMMERSIVE=2 OMARCHY_QEMU_GPU_DRY_RUN=2 \
+  OMARCHY_QEMU_GPU_NESTED_VIRT=yes \
   OMARCHY_QEMU_GPU_SHARED_FOLDER=/etc,x OMARCHY_SHELL_INSTALL_PACKAGE=/etc/hosts OMARCHY_NETWORK_MODE=vmnet \
   OMARCHY_QEMU_GPU_PORT_FORWARDS=tcp:22:22:22; do
   launch_env=("$setting" OMARCHY_QEMU_GPU_STATE_ROOT="$untouched")

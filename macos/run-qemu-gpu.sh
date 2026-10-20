@@ -54,6 +54,15 @@ firmware_code=${OMARCHY_SHELL_FIRMWARE:-"$resources_dir/firmware/edk2-aarch64-co
 [[ $(uname -m) == arm64 && $(uname -s) == Darwin ]] || fail "requires an Apple Silicon Mac"
 macos_major=$(sw_vers -productVersion | cut -d. -f1)
 [[ $macos_major =~ ^[0-9]+$ ]] && ((macos_major >= 15)) || fail "requires macOS 15 or newer"
+# Nested virtualization (EL2) is opt-in: the UEFI firmware then runs at EL2
+# too, where its virtual-timer interrupt never arrives under HVF, so Limine
+# hangs in its first timer wait (seen on macOS 26 and 27, M4 and M5). 1 probes
+# EL2 on macOS 26 or newer; 0, the default, always uses EL1.
+case ${OMARCHY_QEMU_GPU_NESTED_VIRT:-0} in
+  1) ((macos_major >= 26)) && probe_nested=1 || probe_nested=0 ;;
+  0) probe_nested=0 ;;
+  *) fail "OMARCHY_QEMU_GPU_NESTED_VIRT must be 0 or 1" ;;
+esac
 [[ -d $guest_input && ! -L $guest_input ]] || fail "guest directory is missing or unsafe: $guest_input"
 guest_dir=$(cd "$guest_input" && pwd -P)
 
@@ -252,6 +261,27 @@ case $keyboard in ansi | iso | jis) host_options+=" tryomarchy.keyboard=$keyboar
 # QEMU's Cocoa display maps the ISO section key from the same geometry.
 export TRYOMARCHY_KEYBOARD=$keyboard
 
+# The camera housing of the Mac's built-in panel, one WIDTHxHEIGHT:TOP per
+# display mode in pixels: QEMU's full screen covers the strip beside it, and
+# the guest describes it to Omarchy's bar. Nothing on a Mac without a notch,
+# or with the launcher's Camera notch setting off (OMARCHY_QEMU_GPU_NOTCH=0):
+# full screen then stays below the housing, which QEMU reads as
+# TRYOMARCHY_NOTCH=0. The notch is cosmetic, so a failed probe only leaves it
+# out.
+case ${OMARCHY_QEMU_GPU_NOTCH:-1} in
+  1) ;;
+  0) export TRYOMARCHY_NOTCH=0 ;;
+  *) fail "OMARCHY_QEMU_GPU_NOTCH must be 0 or 1" ;;
+esac
+if [[ ${TRYOMARCHY_NOTCH:-1} != 0 ]]; then
+  display_cutouts=$("$native_bridge" --host-display-cutouts 2>/dev/null) || display_cutouts=
+  if [[ $display_cutouts =~ ^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}:[1-9][0-9]{0,3}(,[1-9][0-9]{0,4}x[1-9][0-9]{0,4}:[1-9][0-9]{0,3}){0,63}$ ]]; then
+    host_options+=" tryomarchy.display_cutouts=$display_cutouts"
+  elif [[ -n $display_cutouts ]]; then
+    echo "run-qemu-gpu: ignoring unexpected display cutouts: $display_cutouts" >&2
+  fi
+fi
+
 if [[ -n ${OMARCHY_QEMU_GPU_MAC_LANGUAGE:-} ]]; then
   [[ $OMARCHY_QEMU_GPU_MAC_LANGUAGE =~ ^[a-z]{2,3}$ ]] || fail "invalid Mac language"
   host_options+=" tryomarchy.mac_language=$OMARCHY_QEMU_GPU_MAC_LANGUAGE"
@@ -340,7 +370,7 @@ qemu_machine='virt,gic-version=3'
 qemu_accel=(-accel hvf)
 # On Macs without EL2 support the probe aborts; a subshell keeps the shell's
 # job report about that out of the launch log.
-if ((macos_major >= 26)) && (
+if ((probe_nested)) && (
   printf '%s\n' '{"execute":"qmp_capabilities"}' '{"execute":"quit"}' |
     "$qemu_bin" -machine 'virt,gic-version=3,virtualization=on' -accel 'hvf,kernel-irqchip=on' \
       -cpu 'host,pmu=off' -smp 1 -m 128M -nodefaults -display none -S -qmp stdio
@@ -348,8 +378,10 @@ if ((macos_major >= 26)) && (
   qemu_machine='virt,gic-version=3,virtualization=on'
   qemu_accel=(-accel 'hvf,kernel-irqchip=on')
   echo '[qemu-gpu] Nested virtualization is enabled.' >&2
-else
+elif ((probe_nested)); then
   echo '[qemu-gpu] Nested virtualization is unavailable; using the compatible EL1 path.' >&2
+else
+  echo '[qemu-gpu] Nested virtualization is off; using the EL1 path.' >&2
 fi
 
 case ${OMARCHY_QEMU_GPU_IMMERSIVE:-1} in

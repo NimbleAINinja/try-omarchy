@@ -45,31 +45,14 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
     }
 
     private func buildWindow() {
-        window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 640),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Keyboard"
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = OmarchyStartMenuTheme.background
+        let width: CGFloat = 540
+        window = NativeSheetChrome.window(title: "Keyboard", width: width)
         window.delegate = self
-        window.setAccessibilityLabel("Keyboard")
 
-        let title = label("Keyboard", size: 22, weight: .bold)
-        let explanation = label(
-            "Choose which side gets the Mac's dedicated keys while Omarchy is focused. Changes apply on the next launch.",
-            size: 11, muted: true
+        let heading = NativeSheetChrome.header(
+            symbol: "keyboard", color: .systemGray, title: "Keyboard",
+            subtitle: "Choose which side gets the Mac's dedicated keys while Omarchy is focused. Changes apply on the next launch."
         )
-        let heading = NSStackView(views: [title, explanation])
-        heading.orientation = .vertical
-        heading.alignment = .leading
-        heading.spacing = 8
-        explanation.widthAnchor.constraint(equalTo: heading.widthAnchor).isActive = true
 
         configure(brightnessPopup, identifier: "brightness", accessibilityLabel: "Brightness keys")
         configure(missionControlPopup, identifier: "mission-control", accessibilityLabel: "Mission Control key")
@@ -78,88 +61,52 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
         configure(doNotDisturbPopup, identifier: "do-not-disturb", accessibilityLabel: "Do Not Disturb key")
         configure(mediaPopup, identifier: "media", accessibilityLabel: "Media keys")
 
-        let rowViews = [
-            routeRow(
+        let group = NativeSheetChrome.group([
+            NativeSheetChrome.row(
                 title: "Brightness",
                 detail: "Display brightness down and up (F1, F2). Built-in Mac keyboards always keep these with macOS.",
                 control: brightnessPopup
             ),
-            routeRow(title: "Mission Control", detail: "The F3 key", control: missionControlPopup),
-            routeRow(title: "Spotlight / Launchpad", detail: "The F4 key", control: spotlightPopup),
-            routeRow(
+            NativeSheetChrome.row(title: "Mission Control", detail: "The F3 key", control: missionControlPopup),
+            NativeSheetChrome.row(title: "Spotlight / Launchpad", detail: "The F4 key", control: spotlightPopup),
+            NativeSheetChrome.row(
                 title: "Dictation / Siri",
                 detail: "The F5 key on built-in Mac keyboards",
                 control: dictationPopup
             ),
-            routeRow(
+            NativeSheetChrome.row(
                 title: "Do Not Disturb",
                 detail: "The F6 key on built-in Mac keyboards",
                 control: doNotDisturbPopup
             ),
-            routeRow(title: "Media", detail: "Previous, play/pause, next (F7–F9). Only while Omarchy is focused.", control: mediaPopup),
-        ]
-        var stacked: [NSView] = []
-        for (index, row) in rowViews.enumerated() {
-            if index > 0 { stacked.append(separator()) }
-            stacked.append(row)
-        }
-        let rows = NSStackView(views: stacked)
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 0
-        rows.translatesAutoresizingMaskIntoConstraints = false
-        let card = NSView()
-        card.wantsLayer = true
-        card.layer?.backgroundColor = OmarchyStartMenuTheme.darkBackground.cgColor
-        card.layer?.cornerRadius = 8
-        card.layer?.borderWidth = 1
-        card.layer?.borderColor = OmarchyStartMenuTheme.border.cgColor
-        card.addSubview(rows)
-        NSLayoutConstraint.activate([
-            rows.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
-            rows.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
-            rows.topAnchor.constraint(equalTo: card.topAnchor),
-            rows.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            NativeSheetChrome.row(
+                title: "Media",
+                detail: "Previous, play/pause, next (F7–F9). Only while Omarchy is focused.",
+                control: mediaPopup
+            ),
         ])
-        for view in stacked {
-            view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        for popup in [missionControlPopup, spotlightPopup, dictationPopup, doNotDisturbPopup, mediaPopup] {
+            popup.widthAnchor.constraint(equalTo: brightnessPopup.widthAnchor).isActive = true
         }
+        brightnessPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
 
-        let note = label(
-            "Volume and mute always stay with macOS. With \"Use F1, F2, etc. as standard function keys\" on, these keys reach Omarchy as F-keys.",
-            size: 11, muted: true
+        let note = NativeSheetChrome.footnote(
+            "Volume and mute always stay with macOS. With \"Use F1, F2, etc. as standard function keys\" on, these keys reach Omarchy as F-keys."
         )
 
-        let defaults = button("Use Defaults", style: .secondary, action: #selector(useDefaults), identifier: "defaults")
-        let cancel = button("Cancel", style: .secondary, action: #selector(cancel), identifier: "cancel")
+        let defaults = button("Use Defaults", action: #selector(useDefaults), identifier: "defaults")
+        let cancel = button("Cancel", action: #selector(cancel), identifier: "cancel")
         cancel.keyEquivalent = "\u{1b}"
-        let save = button("Save", style: .primary, action: #selector(save), identifier: "save")
+        let save = button("Save", action: #selector(save), identifier: "save")
         save.keyEquivalent = "\r"
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let actions = NSStackView(views: [defaults, spacer, cancel, save])
-        actions.spacing = 8
+        let actions = NativeSheetChrome.actions(leading: [defaults], trailing: [cancel, save])
 
-        let stack = NSStackView(views: [heading, card, note, actions])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        let content = NSView()
-        content.wantsLayer = true
-        content.layer?.backgroundColor = OmarchyStartMenuTheme.background.cgColor
-        content.addSubview(stack)
-        window.contentView = content
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 26),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -26),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 38),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -22),
-            heading.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            note.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        let stack = NSStackView(views: [heading, group, note, actions])
+        stack.spacing = 8
+        stack.setCustomSpacing(16, after: heading)
+        stack.setCustomSpacing(6, after: group)
+        stack.setCustomSpacing(12, after: note)
+        NativeSheetChrome.install(stack, in: window, width: width)
     }
 
     private func configure(_ popup: NSPopUpButton, identifier: String, accessibilityLabel: String) {
@@ -167,60 +114,13 @@ final class KeyboardRoutingEditor: NSObject, NSWindowDelegate {
         popup.lastItem?.tag = 0
         popup.addItem(withTitle: "Omarchy")
         popup.lastItem?.tag = 1
-        popup.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
         popup.identifier = NSUserInterfaceItemIdentifier("keyboard-routing-\(identifier)")
         popup.setAccessibilityLabel(accessibilityLabel)
     }
 
-    private func label(
-        _ text: String, size: CGFloat, weight: NSFont.Weight = .regular, muted: Bool = false
-    ) -> NSTextField {
-        let field = NSTextField(wrappingLabelWithString: text)
-        field.font = .monospacedSystemFont(ofSize: size, weight: weight)
-        field.textColor = muted ? OmarchyStartMenuTheme.muted : OmarchyStartMenuTheme.foreground
-        return field
-    }
-
-    private func separator() -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = OmarchyStartMenuTheme.separator.cgColor
-        view.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        return view
-    }
-
-    private func routeRow(title: String, detail: String, control: NSView) -> NSView {
-        let labels = NSStackView(views: [
-            label(title, size: 13, weight: .bold),
-            label(detail, size: 10, muted: true),
-        ])
-        labels.orientation = .vertical
-        labels.alignment = .leading
-        labels.spacing = 5
-        let row = NSView()
-        labels.translatesAutoresizingMaskIntoConstraints = false
-        control.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(labels)
-        row.addSubview(control)
-        NSLayoutConstraint.activate([
-            row.heightAnchor.constraint(equalToConstant: 64),
-            labels.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            labels.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            labels.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -16),
-            control.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            control.widthAnchor.constraint(equalToConstant: 130),
-        ])
-        return row
-    }
-
-    private func button(
-        _ title: String, style: OmarchyControlStyle, action: Selector, identifier: String
-    ) -> OmarchyActionButton {
-        let button = OmarchyActionButton(title: title, style: style, target: self, action: action)
+    private func button(_ title: String, action: Selector, identifier: String) -> NSButton {
+        let button = NativeSheetChrome.button(title, target: self, action: action)
         button.identifier = NSUserInterfaceItemIdentifier("keyboard-routing-\(identifier)")
-        button.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        button.widthAnchor.constraint(equalToConstant: identifier == "defaults" ? 130 : 82).isActive = true
         return button
     }
 
