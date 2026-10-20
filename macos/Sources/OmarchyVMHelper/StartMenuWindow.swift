@@ -834,7 +834,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Reset all settings?"
-        alert.informativeText = "Resources, networking, port forwarding, the shared folder, USB device, audio devices, Immersive Mode, Camera Notch, and Skip Launcher return to their defaults. Your VM and its files are not changed."
+        alert.informativeText = "Resources, networking, port forwarding, the shared folder, USB device, audio devices, Immersive Mode, Camera Notch, Keyboard, and Skip Launcher return to their defaults. Your VM and its files are not changed."
         let reset = alert.addButton(withTitle: "Reset Settings")
         reset.hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
