@@ -102,9 +102,9 @@ class GraphicalBridges(unittest.TestCase):
         install = (PACKAGE / "try-omarchy.install").read_text()
         self.assertIn("omarchy-native-dictation-bridge.service", install[:install.index("post_install()")])
         post_upgrade = install[install.index("post_upgrade()"):]
-        self.assertIn('if [ "$(vercmp "$2" 0.1.0-30)" -lt 0 ]; then\n'
+        self.assertIn('if [ "$(vercmp "$2" 0.1.0-31)" -lt 0 ]; then\n'
                       '    systemctl --global preset omarchy-native-dictation-bridge.service', post_upgrade)
-        self.assertIn("pkgrel=30\n", (PACKAGE / "PKGBUILD").read_text())
+        self.assertIn("pkgrel=31\n", (PACKAGE / "PKGBUILD").read_text())
 
     def test_dictation_bridge_waits_for_its_port(self):
         unit = configparser.ConfigParser(interpolation=None, strict=False)
@@ -603,8 +603,10 @@ class ClockRecovery(unittest.TestCase):
              mock.patch("time.time", return_value=1792335311 - 3600), \
              mock.patch("time.monotonic", side_effect=[100, 100.1]), \
              mock.patch("time.clock_settime", create=True) as step, \
-             mock.patch("subprocess.run"):
-            return module.recover(), step.called
+             mock.patch("subprocess.run") as run:
+            result = module.recover()
+            self.calls = [call.args[0][2:] for call in run.call_args_list]
+            return result, step.called
 
     def test_steps_forward_from_the_pl031_under_either_driver(self):
         # UEFI boots reach the PL031 through firmware runtime services (#389).
@@ -612,8 +614,47 @@ class ClockRecovery(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(self.recover(name), (True, True))
 
+    def test_a_step_redraws_the_bar_clock_and_resyncs_ntp(self):
+        self.recover("rtc-efi rtc-efi.0\n")
+        self.assertEqual(self.calls, [["restart", "try-omarchy-clock-refresh.service"],
+                                      ["try-restart", "systemd-timesyncd.service"]])
+
     def test_other_clocks_are_not_trusted(self):
         self.assertEqual(self.recover("rtc-cmos 00:01\n"), (False, False))
+        self.assertEqual(self.calls, [])
+
+    def test_the_refresh_runs_outside_the_recovery_sandbox(self):
+        # runuser needs more than CAP_SYS_TIME, and the shell lives in ~.
+        units = FILES / "usr/lib/systemd/system"
+        recovery = (units / "try-omarchy-clock-recovery.service").read_text()
+        self.assertIn("CapabilityBoundingSet=CAP_SYS_TIME", recovery)
+        refresh = (units / "try-omarchy-clock-refresh.service").read_text()
+        self.assertIn("ExecStart=/usr/lib/try-omarchy/clock-refresh --after-step\n", refresh)
+        self.assertNotIn("CapabilityBoundingSet", refresh)
+        self.assertNotIn("[Install]", refresh)  # started only by the recovery
+
+
+class ClockRefresh(unittest.TestCase):
+    def setUp(self):
+        self.module = load(LIB / "clock-refresh", "clock_refresh")
+
+    def run_main(self, arguments, now):
+        events = []
+        with mock.patch("time.time", return_value=now):
+            self.module.main(arguments, refresh=lambda: events.append("refresh"),
+                             sleep=lambda seconds: events.append(round(seconds, 2)))
+        return events
+
+    def test_a_refresh_after_a_step_repeats_on_the_next_minute(self):
+        # The bar's SystemClock may still be armed for a minute from before
+        # the step; the second redraw covers the one minute it can miss.
+        self.assertEqual(self.run_main(["--after-step"], 1792335311.5), ["refresh", 48.75, "refresh"])
+        self.assertEqual(self.run_main(["--after-step"], 1792335359.9), ["refresh", 0.35, "refresh"])
+
+    def test_a_plain_refresh_redraws_once(self):
+        self.assertEqual(self.run_main([], 1792335311.5), ["refresh"])
+        with self.assertRaises(SystemExit):
+            self.run_main(["--now"], 1792335311.5)
 
 
 class Power(unittest.TestCase):
@@ -827,6 +868,18 @@ class TimeZone(unittest.TestCase):
         self.assertEqual(self.mode(), "manual")
         self.assertFalse(self.sync("Europe/Lisbon"))
         self.assertEqual(self.localtime.resolve(), (self.zoneinfo / "UTC").resolve())
+
+    def test_a_mac_wake_checks_the_clock_and_nothing_else(self):
+        recovered = []
+        with mock.patch.object(self.module, "follow") as follow:
+            self.module.handle({"type": "wake"}, recover=lambda: recovered.append(True))
+            follow.assert_not_called()
+        self.assertEqual(recovered, [True])
+        for message in ({"type": "wake", "zone": "UTC"}, {"type": "wake", "time": 1792335311},
+                        {"type": "clock"}, ["wake"]):
+            with self.subTest(message=message), self.assertRaises(ValueError):
+                self.module.handle(message, recover=lambda: recovered.append(message))
+        self.assertEqual(recovered, [True])
 
     def test_mode_is_readable_by_the_desktop_picker(self):
         self.link("Asia/Tokyo")

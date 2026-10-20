@@ -1,5 +1,8 @@
 # Architecture
 
+The principles behind these choices are in
+[CONTRIBUTING.md](../CONTRIBUTING.md#principles).
+
 Try Omarchy packages four pieces into one macOS app:
 
 1. A small Swift/AppKit launcher for the macOS side.
@@ -235,7 +238,7 @@ On boots without the setting it removes that rule. `sshd` is never enabled
 persistently.
 
 SSH host keys belong to the writable guest disk. A persistent VM keeps them;
-Factory Reset and each ephemeral disk generate new keys. Reusing the same
+Deleting the VM for a fresh one and each ephemeral disk generate new keys. Reusing the same
 Mac endpoint after either operation can require removing that endpoint from the
 Mac's `known_hosts`. Loopback prevents LAN access but other local Mac processes
 and users can still attempt authentication.
@@ -312,11 +315,11 @@ free. App instances share the download through a lock on `shell-factory/`.
 On the first launch of a factory, the launcher verifies the compressed disk's
 digest, decompresses it into `shell-factory/`, and returns its zero blocks to
 APFS (about 9 GB stays allocated for the 20 GiB disk). Each new VM is then an
-APFS clone of that file, so creating or resetting a VM costs no space. A
+APFS clone of that file, so creating a VM costs no space. A
 disposable session clones the same file into its own temporary folder.
 
-The factory disk applies only when no VM exists, after a confirmed reset, or
-in ephemeral mode. An app update never replaces an existing VM's disk; the
+The factory disk applies only when no VM exists, such as after the VM is
+deleted, or in ephemeral mode. An app update never replaces an existing VM's disk; the
 guest updates itself. Disks from earlier direct-boot versions of the app
 (`disks/`, `boot/`) are left untouched and are not launched; the old root is
 attached read-only so `try-omarchy-import-previous` in the guest can copy the
@@ -349,16 +352,17 @@ regular file, checks for source and destination changes,
 flushes files and directories, and atomically publishes the copy. Only success
 changes the saved boot location. Phase and measured verification progress
 stream to the management sheet, which stays open until the transaction ends.
-The original is retained as a recovery copy;
+After success the management sheet sends the original to Trash through the
+identity-checked `--trash-vm` helper below;
 unrecognized host files are never replaced. The lock file is recreated rather
 than opened for copying, because closing any descriptor for a locked inode
 would release the helper process's POSIX lock.
 
-Deletion runs a separate `--trash-vm` helper process. Confirmation captures the
-selected folder and disk identity. The helper validates the workspace, holds the
-launcher lock, rejects a changed disk or unsafe tree, and moves the complete
-folder to macOS Trash. Preferences and other VM copies are kept; failures never
-fall back to permanent removal.
+Deleting a VM, and retiring the original after a move, run a separate
+`--trash-vm` helper process bound to the folder and disk identity. The helper
+validates the workspace, holds the launcher lock, rejects a changed disk or
+unsafe tree, and moves the complete folder to macOS Trash, where Finder's Put
+Back can restore it. Failures never fall back to permanent removal.
 
 ## Build layout
 
@@ -382,7 +386,7 @@ App releases and guest updates are separate channels. Omarchy's own updater
 moves the guest, kernel included, on the channel the user picks. The app can
 only offer its bundled `try-omarchy` package, which the guest installs when it
 is newer. Guest reports are advisory and cannot select host paths or run host
-code. Factory reset is the way to start again from the current factory.
+code. Deleting the VM is the way to start again from the current factory.
 
 The factory build resolves against live repositories. The Omarchy repository
 key in `guest/keys/` is reviewed and imported without a keyserver lookup;

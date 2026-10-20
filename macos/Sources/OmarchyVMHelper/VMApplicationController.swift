@@ -262,13 +262,6 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
                     preference: self.storageLocationStore.load()
                 )
             },
-            storageSpaceEstimate: { [weak self] in
-                guard let self else { return nil }
-                return QEMUGPUStorageSpaceEstimate.formattedReclaimableSpace(
-                    environment: self.baseEnvironment,
-                    preference: self.storageLocationStore.load()
-                )
-            },
             storageLocationStatus: { [weak self] in
                 self?.storageLocationMenuState() ?? .defaultLocation
             },
@@ -281,11 +274,14 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             useDefaultStorageLocation: { [weak self] in
                 self?.useDefaultStorageLocation()
             },
-            resetStorage: { [weak self] in
-                self?.resetVirtualMachine()
+            resetSettings: { [weak self] in
+                self?.resetSettings()
             },
             deleteStorageLocation: { [weak self] source, identity, completion in
                 self?.deleteStorageLocation(source, identity: identity, completion: completion)
+            },
+            discardStorageLocation: { [weak self] source, identity, completion in
+                self?.discardPreviousStorageLocation(source, identity: identity, completion: completion)
             },
             moveStorageLocation: { [weak self] source, path, progress, completion in
                 self?.moveStorageLocation(from: source, to: path, progress: progress, completion: completion)
@@ -377,6 +373,10 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
                 self?.appReleaseChecker.menuTitle ?? "Check for Updates…"
             },
             checkForAppUpdates: { [weak self] in self?.checkForAppUpdates(nil) },
+            permissionPromptShown: { UserDefaults.standard.bool(forKey: Self.permissionPromptShownKey) },
+            setPermissionPromptShown: { UserDefaults.standard.set(true, forKey: Self.permissionPromptShownKey) },
+            firstBootCompleted: { UserDefaults.standard.bool(forKey: Self.firstBootCompletedKey) },
+            setFirstBootCompleted: { UserDefaults.standard.set(true, forKey: Self.firstBootCompletedKey) },
             launch: { [weak self] in
                 self?.startVirtualMachine()
             }
@@ -389,7 +389,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         } else {
             startMenu.show()
             if honorInitialReset && initialResetRequested {
-                startMenu.promptForReset()
+                startMenu.promptForDeletion()
             }
         }
     }
@@ -456,66 +456,19 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         return arguments
     }
 
-    private func resetArguments() -> [String] {
-        var arguments = launchArguments()
-        arguments.insert(QEMUGPUStorageOption.resetStorageOnly.rawValue, at: 0)
-        return arguments
-    }
-
-    private func resetVirtualMachine() {
-        // Unlike launch, a reset that lands on the default workspace after the
-        // chosen drive went missing would erase a VM the user never confirmed.
-        // Switching the setting is allowed; erasing on that same click is not,
-        // so the reset is abandoned and they get an accurate confirmation the
-        // next time they ask for one.
-        guard resolveStorageLocationAvailability(forReset: true) == .available else {
-            startMenuWindow?.resetDidAbort()
-            return
-        }
-        do {
-            let context = childLaunchContext(forReset: true)
-            guard context.storageUnavailableReason == nil else {
-                startMenuWindow?.resetDidFinish(
-                    errorMessage: context.storageUnavailableReason
-                )
-                return
-            }
-            activeStateRoot = context.stateRoot
-            try supervisor.start(
-                executableURL: launcherURL,
-                arguments: resetArguments(),
-                environment: QEMUGPURuntimeEnvironment.sanitizedForReset(context.environment),
-                launchEvent: { [weak self] event in
-                    if case .resetProgress(let phase) = event {
-                        self?.startMenuWindow?.resetDidProgress(to: phase)
-                    }
-                }
-            ) { [weak self] status in
-                self?.resetDidExit(status: status)
-            }
-            childRunning = true
-        } catch {
-            startMenuWindow?.resetDidFinish(errorMessage: error.localizedDescription)
-        }
-    }
-
-    private func resetDidExit(status: Int32) {
-        guard childRunning else { return }
-        childRunning = false
-        cancelHostWakeRetry()
-        hostSleepCoordinator.disconnect()
-        let wasStopping = lifecycle.isStopping
-        lifecycle.childExited()
-        if applicationTerminationPending {
-            NSApp.reply(toApplicationShouldTerminate: true)
-        } else if wasStopping {
-            finish(status: status)
-        } else if status == 0 {
-            startMenuWindow?.resetDidFinish(errorMessage: nil)
-        } else {
-            startMenuWindow?.resetDidFinish(
-                errorMessage: "The VM disk could not be reset. Try again, or reinstall the latest Try Omarchy app."
-            )
+    /// Every launcher setting returns to its default. Which VM is selected,
+    /// the VM itself, and permission choices stay.
+    private func resetSettings() {
+        preferenceStore.save(.systemDefaults)
+        sharedFolderStore.save(.disabled)
+        usbDeviceStore.save(.disabled)
+        try? portForwardingStore.save([])
+        try? networkStore.save(VMNetworkPreferences())
+        fullscreenPreferenceStore.save(.defaults)
+        dictationPreferenceStore.save(.defaults)
+        resourcePreferenceStore.clear()
+        if let root = startupPreferenceRoot() {
+            try? startupPreferenceStore.save(false, storageRoot: root)
         }
     }
 
@@ -876,6 +829,9 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         supervisor.forward(signal: SIGTERM)
     }
 
+    private static let permissionPromptShownKey = "LauncherPermissionPromptShown"
+    private static let firstBootCompletedKey = "LauncherFirstBootCompleted"
+
     private static var homeDirectory: String {
         FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
     }
@@ -1015,14 +971,38 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     }
 
     private func deleteStorageLocation(_ source: String, identity: String, completion: @escaping (String?) -> Void) {
-        guard !childRunning, workspaceTransferProcess == nil, storageEnvironmentOverride == nil,
-              startupPreferenceRoot()?.path == source, let executable = Bundle.main.executableURL else {
+        guard storageEnvironmentOverride == nil, startupPreferenceRoot()?.path == source else {
             completion("Shut down Omarchy before deleting its VM. The selected VM must match the confirmed folder.")
+            return
+        }
+        runWorkspaceHelper(["--trash-vm", source, identity],
+            failure: "Could not move this VM to Trash. The selected folder was retained.", completion: completion)
+    }
+
+    /// The copy a move left behind. It is never the selected VM, so trashing
+    /// it cannot strand the next launch.
+    private func discardPreviousStorageLocation(_ source: String, identity: String, completion: @escaping (String?) -> Void) {
+        guard !childRunning, workspaceTransferProcess == nil, storageEnvironmentOverride == nil,
+              let selected = startupPreferenceRoot(), selected.path != source else {
+            completion("Shut down Omarchy before deleting the previous copy.")
+            return
+        }
+        runWorkspaceHelper(["--trash-vm", source, identity],
+            failure: "Could not move the previous copy to Trash.", completion: completion)
+    }
+
+    /// Runs a workspace change in a separate helper process, which owns the
+    /// POSIX lock so unrelated UI file reads cannot release it.
+    private func runWorkspaceHelper(_ arguments: [String], failure: String,
+        completion: @escaping (String?) -> Void) {
+        guard !childRunning, workspaceTransferProcess == nil,
+              let executable = Bundle.main.executableURL else {
+            completion("Shut down Omarchy before changing its VM.")
             return
         }
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["--trash-vm", source, identity]
+        process.arguments = arguments
         let errors = Pipe()
         process.standardError = errors
         process.standardOutput = FileHandle.nullDevice
@@ -1036,8 +1016,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             process.waitUntilExit()
             DispatchQueue.main.async { [weak self] in
                 self?.workspaceTransferProcess = nil
-                completion(process.terminationStatus == 0 ? nil :
-                    (message.isEmpty ? "Could not move this VM to Trash. The selected folder was retained." : message))
+                completion(process.terminationStatus == 0 ? nil : (message.isEmpty ? failure : message))
             }
         }
     }
@@ -1157,6 +1136,9 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     private func beginResumeAfterHostWake() {
         cancelHostWakeRetry()
         resumeAfterHostWake()
+        // The guest clock stood still while the Mac slept, paused or not; the
+        // time zone bridge prompts the guest to recover it now.
+        HostWake.post()
     }
 
     private func resumeAfterHostWake() {
