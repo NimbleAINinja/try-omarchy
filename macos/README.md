@@ -110,11 +110,11 @@ ignored.
 
 **Virtual Machine → Reset Settings…** asks once, then returns every launcher
 setting (resources, networking, port forwarding, shared folder, USB device,
-audio routing, Immersive Mode, Camera Notch, keyboard routing, Skip launcher) to its default. It
-keeps the VM, the selected VM folder, and permission choices. Starting over
-from the factory is **Manage… → Delete VM…**, described below. The next launch
-prepares a new disk if needed, with its button showing checking, image
-preparation, setup, and startup phases.
+audio routing, Immersive Mode, Camera Notch, keyboard routing, Skip launcher)
+to its default. It keeps the VM, the selected VM folder, and permission
+choices. Starting over from the factory is **Manage… → Delete VM…**, described
+below. The next launch prepares a new disk if needed, with its button showing
+checking, image preparation, setup, and startup phases.
 Phase changes come from the launcher process and are also announced to VoiceOver.
 
 The launcher's **Selected VM → Manage…** sheet shows the current selection,
