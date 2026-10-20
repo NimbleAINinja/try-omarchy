@@ -54,7 +54,7 @@ index 44c2560..7c4ece1 100644
      "              [,full-screen=on|off][,zoom-to-fit=on|off]\n"
  #endif
 diff --git a/ui/cocoa.m b/ui/cocoa.m
-index 2af9132..7045f89 100644
+index 7dc23ee..c5ba5b4 100644
 --- a/ui/cocoa.m
 +++ b/ui/cocoa.m
 @@ -355,6 +355,7 @@ - (void) notifyMouseModeChange;
@@ -153,8 +153,8 @@ index 2af9132..7045f89 100644
      eventsTap = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
                                   mask, handleTapEvent, self);
      if (!eventsTap) {
-@@ -1432,6 +1493,20 @@ - (void) raiseAllKeys
-     });
+@@ -1420,6 +1481,20 @@ - (void) reenableEventTap
+     }
  }
  
 +/*
@@ -171,13 +171,13 @@ index 2af9132..7045f89 100644
 +    });
 +}
 +
- - (void) raiseAllButtons
- {
-     with_bql(^{
-@@ -2744,6 +2819,8 @@ static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
-                         opts->u.cocoa.full_grab;
-     immersive_mode_enabled = !opts->u.cocoa.has_immersive ||
-                              opts->u.cocoa.immersive;
+ /*
+  * Makes the target think all down keys are being released.
+  * This prevents a stuck key problem, since we will not see
+@@ -2740,6 +2815,8 @@ static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
+         dcl.ops = &dcl_ops;
+     }
+ 
 +    media_keys_enabled = opts->u.cocoa.has_media_keys &&
 +                         opts->u.cocoa.media_keys;
      if (opts->u.cocoa.host_keys &&
