@@ -464,6 +464,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         try? portForwardingStore.save([])
         try? networkStore.save(VMNetworkPreferences())
         fullscreenPreferenceStore.save(.defaults)
+        keyboardRoutingPreferenceStore.save(.defaults)
         resourcePreferenceStore.clear()
         if let root = startupPreferenceRoot() {
             try? startupPreferenceStore.save(false, storageRoot: root)
