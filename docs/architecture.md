@@ -1,5 +1,8 @@
 # Architecture
 
+The principles behind these choices are in
+[CONTRIBUTING.md](../CONTRIBUTING.md#principles).
+
 Try Omarchy packages four pieces into one macOS app:
 
 1. A small Swift/AppKit launcher for the macOS side.
@@ -62,13 +65,15 @@ Omarchy's own aarch64 Hyprland package unpatched.
 Storage, networking, audio, and input use their matching
 QEMU virtual devices and host backends.
 
-On macOS 26 or newer, before the real VM starts, the launcher asks the bundled
-QEMU to create a tiny disposable HVF machine with ARM virtualization extensions
-and Apple's platform GICv3. When that probe succeeds on M3 and newer Apple
-Silicon, the real guest starts at EL2 and Linux exposes `/dev/kvm`; on older
-chips and on macOS 15 the launcher keeps the existing platform-GIC/EL1
-configuration. The launcher rejects hosts older than macOS 15 before probing
-or starting QEMU. The updated VirGL renderer is source-built for macOS 15.0,
+The guest starts at EL1 with QEMU's GICv3 by default. Nested virtualization
+is opt-in (`OMARCHY_QEMU_GPU_NESTED_VIRT=1`) because the UEFI firmware also
+runs at EL2, where its virtual-timer interrupt never arrives under HVF, so
+Limine hangs in its first timer wait. When opted in on macOS 26 or newer, the
+launcher first asks the bundled QEMU to create a tiny disposable HVF machine
+with ARM virtualization extensions and Apple's platform GICv3. When that probe
+succeeds on M3 and newer Apple Silicon, the real guest starts at EL2 and Linux
+exposes `/dev/kvm`; otherwise the launcher keeps the EL1 configuration. The
+launcher rejects hosts older than macOS 15 before probing or starting QEMU. The updated VirGL renderer is source-built for macOS 15.0,
 including the dual-source shader fix used by accelerated terminals.
 The pinned QEMU 11.1.1 runtime contains the upstream HVF vGIC and
 nested-virtualization implementation.
@@ -223,7 +228,7 @@ On boots without the setting it removes that rule. `sshd` is never enabled
 persistently.
 
 SSH host keys belong to the writable guest disk. A persistent VM keeps them;
-Factory Reset and each ephemeral disk generate new keys. Reusing the same
+Deleting the VM for a fresh one and each ephemeral disk generate new keys. Reusing the same
 Mac endpoint after either operation can require removing that endpoint from the
 Mac's `known_hosts`. Loopback prevents LAN access but other local Mac processes
 and users can still attempt authentication.
@@ -300,11 +305,11 @@ free. App instances share the download through a lock on `shell-factory/`.
 On the first launch of a factory, the launcher verifies the compressed disk's
 digest, decompresses it into `shell-factory/`, and returns its zero blocks to
 APFS (about 9 GB stays allocated for the 20 GiB disk). Each new VM is then an
-APFS clone of that file, so creating or resetting a VM costs no space. A
+APFS clone of that file, so creating a VM costs no space. A
 disposable session clones the same file into its own temporary folder.
 
-The factory disk applies only when no VM exists, after a confirmed reset, or
-in ephemeral mode. An app update never replaces an existing VM's disk; the
+The factory disk applies only when no VM exists, such as after the VM is
+deleted, or in ephemeral mode. An app update never replaces an existing VM's disk; the
 guest updates itself. Disks from earlier direct-boot versions of the app
 (`disks/`, `boot/`) are left untouched and are not launched; the old root is
 attached read-only so `try-omarchy-import-previous` in the guest can copy the
@@ -337,16 +342,17 @@ regular file, checks for source and destination changes,
 flushes files and directories, and atomically publishes the copy. Only success
 changes the saved boot location. Phase and measured verification progress
 stream to the management sheet, which stays open until the transaction ends.
-The original is retained as a recovery copy;
+After success the management sheet sends the original to Trash through the
+identity-checked `--trash-vm` helper below;
 unrecognized host files are never replaced. The lock file is recreated rather
 than opened for copying, because closing any descriptor for a locked inode
 would release the helper process's POSIX lock.
 
-Deletion runs a separate `--trash-vm` helper process. Confirmation captures the
-selected folder and disk identity. The helper validates the workspace, holds the
-launcher lock, rejects a changed disk or unsafe tree, and moves the complete
-folder to macOS Trash. Preferences and other VM copies are kept; failures never
-fall back to permanent removal.
+Deleting a VM, and retiring the original after a move, run a separate
+`--trash-vm` helper process bound to the folder and disk identity. The helper
+validates the workspace, holds the launcher lock, rejects a changed disk or
+unsafe tree, and moves the complete folder to macOS Trash, where Finder's Put
+Back can restore it. Failures never fall back to permanent removal.
 
 ## Build layout
 
@@ -370,7 +376,7 @@ App releases and guest updates are separate channels. Omarchy's own updater
 moves the guest, kernel included, on the channel the user picks. The app can
 only offer its bundled `try-omarchy` package, which the guest installs when it
 is newer. Guest reports are advisory and cannot select host paths or run host
-code. Factory reset is the way to start again from the current factory.
+code. Deleting the VM is the way to start again from the current factory.
 
 The factory build resolves against live repositories. The Omarchy repository
 key in `guest/keys/` is reviewed and imported without a keyserver lookup;
@@ -391,3 +397,9 @@ absent setting uses the live EDID's pixel density. If a resized display cannot
 represent the requested zoom exactly, the helper selects the nearest supported
 scale with integral logical dimensions. Explicit per-output monitor rules still
 take precedence over the helper's catch-all rule.
+
+On a MacBook with a camera notch, full screen covers the whole panel, the
+strip beside the housing included, and the guest describes the housing to
+Omarchy's bar through Omarchy's own `display-cutouts.json`, so the bar sits
+beside the camera and windows start below it. See
+[camera notch](camera-notch.md).

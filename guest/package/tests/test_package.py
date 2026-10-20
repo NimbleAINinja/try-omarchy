@@ -12,6 +12,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 PACKAGE = Path(__file__).resolve().parents[1] / "try-omarchy"
 FILES = PACKAGE / "files"
@@ -42,6 +43,17 @@ class PackageLayout(unittest.TestCase):
             relative = path.relative_to(FILES).as_posix()
             for forbidden in ("usr/share/omarchy/", "etc/skel/", "usr/share/omarchy-platform/"):
                 self.assertFalse(relative.startswith(forbidden), relative)
+
+    def test_platform_root_holds_only_the_camera_cutouts_link(self):
+        # Generic aarch64 registers no platform package; the one file the VM
+        # adds to Omarchy's platform root points at this boot's cutouts.
+        lines = [line.strip() for line in (PACKAGE / "PKGBUILD").read_text().splitlines()
+                 if "omarchy-platform" in line and not line.strip().startswith("#")]
+        self.assertEqual(lines, [
+            'install -d "$pkgdir/usr/share/omarchy-platform"',
+            'ln -s /run/try-omarchy/display-cutouts.json "$pkgdir/usr/share/omarchy-platform/display-cutouts.json"',
+        ])
+        self.assertIn("/run/try-omarchy/display-cutouts.json", (LIB / "host-config").read_text())
 
     def test_executables(self):
         for directory in ("usr/bin", "usr/lib/try-omarchy", "usr/lib/try-omarchy/shims", "usr/lib/try-omarchy/bin"):
@@ -131,7 +143,9 @@ class HostConfig(unittest.TestCase):
         self.credentials = self.tmp / "credentials"
         self.credentials.mkdir()
         self.output = self.tmp / "run/try-omarchy/cmdline"
-        self.env = {"CREDENTIALS_DIRECTORY": str(self.credentials), "TRY_OMARCHY_HOST_CONFIG_OUTPUT": str(self.output)}
+        self.cutouts = self.tmp / "run/try-omarchy/display-cutouts.json"
+        self.env = {"CREDENTIALS_DIRECTORY": str(self.credentials), "TRY_OMARCHY_HOST_CONFIG_OUTPUT": str(self.output),
+                    "TRY_OMARCHY_DISPLAY_CUTOUTS_OUTPUT": str(self.cutouts)}
 
     def test_publishes_tokens(self):
         (self.credentials / "tryomarchy.host").write_text("omarchy.qemu_virgl=1 tryomarchy.keyboard=jis\n")
@@ -142,6 +156,32 @@ class HostConfig(unittest.TestCase):
     def test_without_credential_writes_nothing(self):
         run(LIB / "host-config", env=self.env)
         self.assertFalse(self.output.exists())
+        self.assertFalse(self.cutouts.exists())
+
+    def test_describes_the_macs_camera_housing_to_omarchy(self):
+        (self.credentials / "tryomarchy.host").write_text(
+            "omarchy.qemu_virgl=1 tryomarchy.display_cutouts=3024x1964:64,2048x1330:44 tryomarchy.keyboard=ansi\n")
+        run(LIB / "host-config", env=self.env)
+        # The schema Omarchy's bar parses (BarModel.parseCutouts): QEMU's
+        # first output, every panel mode with the housing in physical pixels.
+        self.assertEqual(json.loads(self.cutouts.read_text()), {"panels": [
+            {"connector": "Virtual-1", "width": 3024, "height": 1964, "top": 64},
+            {"connector": "Virtual-1", "width": 2048, "height": 1330, "top": 44},
+        ]})
+        self.assertEqual(stat.S_IMODE(self.cutouts.stat().st_mode), 0o644)
+
+    def test_no_housing_or_a_malformed_one_describes_none(self):
+        self.cutouts.parent.mkdir(parents=True)
+        for value in ("tryomarchy.keyboard=ansi",
+                      "tryomarchy.display_cutouts=3024x1964:64,",
+                      "tryomarchy.display_cutouts=3024x1964:0",
+                      'tryomarchy.display_cutouts=3024x1964:64"}]',
+                      "tryomarchy.display_cutouts=3024x1964"):
+            self.cutouts.write_text("stale\n")
+            (self.credentials / "tryomarchy.host").write_text(value + "\n")
+            run(LIB / "host-config", env=self.env)
+            self.assertFalse(self.cutouts.exists(), value)
+            self.assertEqual(self.output.read_text(), value + "\n")
 
     def test_rejects_control_characters_and_oversize(self):
         (self.credentials / "tryomarchy.host").write_bytes(b"a\x1bb")
@@ -149,6 +189,59 @@ class HostConfig(unittest.TestCase):
         (self.credentials / "tryomarchy.host").write_text("x" * 20000)
         self.assertNotEqual(run(LIB / "host-config", env=self.env, check=False).returncode, 0)
         self.assertFalse(self.output.exists())
+
+
+class NotchRefresh(unittest.TestCase):
+    """notch-refresh nudges Quickshell only when the cutout's answer can change."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.cutouts = self.tmp / "display-cutouts.json"
+        self.log = self.tmp / "hyprctl.log"
+        shims = self.tmp / "bin"
+        shims.mkdir()
+        (shims / "hyprctl").write_text('#!/bin/bash\necho "$*" >>"$HYPRCTL_LOG"\n')
+        (shims / "hyprctl").chmod(0o755)
+        self.env = {"PATH": f"{shims}:{os.environ['PATH']}", "HYPRCTL_LOG": str(self.log),
+                    "TRY_OMARCHY_DISPLAY_CUTOUTS": str(self.cutouts),
+                    "TRY_OMARCHY_NOTCH_STATE": str(self.tmp / "state/notch-mode")}
+
+    def nudges(self, mode):
+        before = self.log.read_text().count("create") if self.log.exists() else 0
+        run(LIB / "notch-refresh", mode, env=self.env)
+        return self.log.read_text().count("create") - before if self.log.exists() else 0
+
+    def test_only_entering_leaving_or_changing_a_notch_mode_nudges(self):
+        (self.credentials_dir() / "tryomarchy.host").write_text(
+            "tryomarchy.display_cutouts=3600x2338:77,3024x1964:64\n")
+        run(LIB / "host-config", env={"CREDENTIALS_DIRECTORY": str(self.credentials_dir()),
+                                     "TRY_OMARCHY_HOST_CONFIG_OUTPUT": str(self.tmp / "cmdline"),
+                                     "TRY_OMARCHY_DISPLAY_CUTOUTS_OUTPUT": str(self.cutouts)})
+        self.assertEqual(self.nudges("1940x1260"), 0)   # a window at first
+        self.assertEqual(self.nudges("3024x1964"), 1)   # full screen covers the notch
+        self.assertEqual(self.nudges("3024x1964"), 0)   # nothing changed
+        self.assertEqual(self.nudges("3600x2338"), 1)   # another resolution
+        self.assertEqual(self.nudges("1940x1260"), 1)   # back to a window
+        self.assertEqual(self.nudges("1800x1100"), 0)   # a window resized
+        self.assertEqual(self.log.read_text().splitlines()[-2:],
+                         ["output create headless TRYOMARCHY-REFRESH", "output remove TRYOMARCHY-REFRESH"])
+
+    def test_a_mac_without_a_notch_or_a_bad_mode_does_nothing(self):
+        self.assertEqual(self.nudges("3024x1964"), 0)
+        result = run(LIB / "notch-refresh", "3024x1964;reboot", env=self.env, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(self.log.exists())
+
+    def test_display_sync_passes_each_applied_mode(self):
+        sync = (FILES / "usr/bin/omarchy-native-display-sync").read_text()
+        self.assertIn('"$notch_refresh" "${width}x$height" || true', sync)
+        # Only after Hyprland accepted the mode.
+        self.assertLess(sync.index('elif [[ $response != ok ]]'), sync.index('"$notch_refresh"'))
+
+    def credentials_dir(self):
+        path = self.tmp / "credentials"
+        path.mkdir(exist_ok=True)
+        return path
 
 
 class SshAccess(unittest.TestCase):
@@ -458,6 +551,71 @@ def load(path, name):
     return module
 
 
+class ClockRecovery(unittest.TestCase):
+    def recover(self, rtc_name):
+        module = load(LIB / "guest-clock-recover", "guest_clock_recover")
+        files = {"/run/try-omarchy/cmdline": "omarchy.qemu_virgl=1\n",
+                 "/sys/class/rtc/rtc0/name": rtc_name,
+                 "/sys/class/rtc/rtc0/since_epoch": "1792335311\n"}
+        with mock.patch("os.geteuid", return_value=0), \
+             mock.patch("pathlib.Path.read_text", autospec=True, side_effect=lambda p: files[str(p)]), \
+             mock.patch("time.time", return_value=1792335311 - 3600), \
+             mock.patch("time.monotonic", side_effect=[100, 100.1]), \
+             mock.patch("time.clock_settime", create=True) as step, \
+             mock.patch("subprocess.run") as run:
+            result = module.recover()
+            self.calls = [call.args[0][2:] for call in run.call_args_list]
+            return result, step.called
+
+    def test_steps_forward_from_the_pl031_under_either_driver(self):
+        # UEFI boots reach the PL031 through firmware runtime services (#389).
+        for name in ("rtc-pl031 9010000.pl031\n", "rtc-efi rtc-efi.0\n"):
+            with self.subTest(name=name):
+                self.assertEqual(self.recover(name), (True, True))
+
+    def test_a_step_redraws_the_bar_clock_and_resyncs_ntp(self):
+        self.recover("rtc-efi rtc-efi.0\n")
+        self.assertEqual(self.calls, [["restart", "try-omarchy-clock-refresh.service"],
+                                      ["try-restart", "systemd-timesyncd.service"]])
+
+    def test_other_clocks_are_not_trusted(self):
+        self.assertEqual(self.recover("rtc-cmos 00:01\n"), (False, False))
+        self.assertEqual(self.calls, [])
+
+    def test_the_refresh_runs_outside_the_recovery_sandbox(self):
+        # runuser needs more than CAP_SYS_TIME, and the shell lives in ~.
+        units = FILES / "usr/lib/systemd/system"
+        recovery = (units / "try-omarchy-clock-recovery.service").read_text()
+        self.assertIn("CapabilityBoundingSet=CAP_SYS_TIME", recovery)
+        refresh = (units / "try-omarchy-clock-refresh.service").read_text()
+        self.assertIn("ExecStart=/usr/lib/try-omarchy/clock-refresh --after-step\n", refresh)
+        self.assertNotIn("CapabilityBoundingSet", refresh)
+        self.assertNotIn("[Install]", refresh)  # started only by the recovery
+
+
+class ClockRefresh(unittest.TestCase):
+    def setUp(self):
+        self.module = load(LIB / "clock-refresh", "clock_refresh")
+
+    def run_main(self, arguments, now):
+        events = []
+        with mock.patch("time.time", return_value=now):
+            self.module.main(arguments, refresh=lambda: events.append("refresh"),
+                             sleep=lambda seconds: events.append(round(seconds, 2)))
+        return events
+
+    def test_a_refresh_after_a_step_repeats_on_the_next_minute(self):
+        # The bar's SystemClock may still be armed for a minute from before
+        # the step; the second redraw covers the one minute it can miss.
+        self.assertEqual(self.run_main(["--after-step"], 1792335311.5), ["refresh", 48.75, "refresh"])
+        self.assertEqual(self.run_main(["--after-step"], 1792335359.9), ["refresh", 0.35, "refresh"])
+
+    def test_a_plain_refresh_redraws_once(self):
+        self.assertEqual(self.run_main([], 1792335311.5), ["refresh"])
+        with self.assertRaises(SystemExit):
+            self.run_main(["--now"], 1792335311.5)
+
+
 class Power(unittest.TestCase):
     def test_sleep_uses_omarchys_own_off_switch(self):
         # bin/omarchy-sleep-disabled tests for exactly this file; the System
@@ -477,6 +635,30 @@ class Power(unittest.TestCase):
         post_upgrade = install[install.index("post_upgrade()"):]
         self.assertIn("_enable_ntp", post_install)
         self.assertIn('if [ "$(vercmp "$2" 0.1.0-13)" -lt 0 ]; then\n    _enable_ntp', post_upgrade)
+
+    def test_upgrade_from_before_the_cutouts_reruns_host_config(self):
+        # The boot that upgrades an older VM ran the old host-config, which
+        # wrote no cutouts; the desktop starts after the upgrade.
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            log = tmp / "calls"
+            (tmp / "systemctl").write_text('#!/bin/bash\nprintf "%s\\n" "$*" >>"$TEST_LOG"\n')
+            (tmp / "vercmp").write_text('#!/usr/bin/python3\nimport re, sys\n'
+                                        'a, b = (tuple(map(int, re.split(r"[.-]", v))) for v in sys.argv[1:3])\n'
+                                        'print((a > b) - (a < b))\n')
+            for tool in ("systemctl", "vercmp"):
+                (tmp / tool).chmod(0o755)
+            for old, restarted in (("0.1.0-27", True), ("0.1.0-28", False)):
+                log.write_text("")
+                subprocess.run(["/bin/bash", "-c", 'source "$1"; post_upgrade 0.1.0-28 "$2"', "bash",
+                                str(PACKAGE / "try-omarchy.install"), old], check=True, env={
+                    **os.environ, "PATH": f"{tmp}:{os.environ['PATH']}", "TEST_LOG": str(log)})
+                self.assertEqual("try-restart try-omarchy-host-config.service" in log.read_text().splitlines(),
+                                 restarted, old)
+        unit = (PACKAGE / "files/usr/lib/systemd/system/try-omarchy-host-config.service").read_text()
+        self.assertIn("RemainAfterExit=yes", unit)
+        install = (PACKAGE / "files/usr/lib/systemd/system/try-omarchy-package-install.service").read_text()
+        self.assertIn("Before=display-manager.service", install)
 
 
 class ScreenRecording(unittest.TestCase):
@@ -530,6 +712,41 @@ class Recipe(unittest.TestCase):
         line = next(line for line in text.splitlines() if line.startswith("KERNEL_CMDLINE[default]+="))
         consoles = re.findall(r"console=(\w+)", line)
         self.assertEqual(consoles, ["hvc0", "tty0"])
+
+    def test_cpu_drop_in_hides_sme_without_sve(self):
+        # The M4 has SME but no SVE; QEMU under HVF cannot hide SME.
+        text = (FILES / "etc/limine-entry-tool.d/50-try-omarchy-cpu.conf").read_text()
+        lines = [line for line in text.splitlines() if line.startswith("KERNEL_CMDLINE[default]+=")]
+        self.assertEqual(lines, ['KERNEL_CMDLINE[default]+=" arm64.nosme"'])
+        self.assertIn("'etc/limine-entry-tool.d/50-try-omarchy-cpu.conf'", (PACKAGE / "PKGBUILD").read_text())
+
+    def test_upgrade_rebuilds_limine_once_where_the_kernel_shows_sme(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            log = tmp / "calls"
+            limine = tmp / "limine.conf"
+            limine.write_text("")
+            for name in ("limine-update", "systemctl"):
+                (tmp / name).write_text(f'#!/bin/bash\nprintf "%s\\n" "{name} $*" >>"$TEST_LOG"\n')
+                (tmp / name).chmod(0o755)
+            cpuinfo, cmdline = tmp / "cpuinfo", tmp / "cmdline"
+            for features, running, boot, expected in (
+                ("fp asimd sme sme2", "quiet", limine, ["limine-update "]),
+                ("fp asimd sme sme2", "quiet arm64.nosme", limine, []),
+                ("fp asimd sme2", "quiet", limine, []),
+                ("fp asimd", "quiet", limine, []),
+                ("fp asimd sme", "quiet", tmp / "missing.conf", []),
+            ):
+                log.write_text("")
+                cpuinfo.write_text(f"Features\t: {features}\n")
+                cmdline.write_text(running + "\n")
+                subprocess.run(["/bin/bash", "-c", 'source "$1"; _hide_sme "$2" "$3" "$4"', "bash",
+                                str(PACKAGE / "try-omarchy.install"), cpuinfo, cmdline, boot], check=True,
+                               env={**os.environ, "PATH": f"{tmp}:{os.environ['PATH']}", "TEST_LOG": str(log)})
+                calls = [line for line in log.read_text().splitlines() if line.startswith("limine-update")]
+                self.assertEqual(calls, expected, (features, running, boot.name))
+        install = (PACKAGE / "try-omarchy.install").read_text()
+        self.assertIn('if [ "$(vercmp "$2" 0.1.0-27)" -lt 0 ]; then\n    _hide_sme\n', install)
 
     def test_chromium_takes_input_methods(self):
         self.assertIn("--enable-wayland-ime", (FILES / "etc/chromium-flags.conf").read_text().split())
@@ -610,6 +827,18 @@ class TimeZone(unittest.TestCase):
         self.assertEqual(self.mode(), "manual")
         self.assertFalse(self.sync("Europe/Lisbon"))
         self.assertEqual(self.localtime.resolve(), (self.zoneinfo / "UTC").resolve())
+
+    def test_a_mac_wake_checks_the_clock_and_nothing_else(self):
+        recovered = []
+        with mock.patch.object(self.module, "follow") as follow:
+            self.module.handle({"type": "wake"}, recover=lambda: recovered.append(True))
+            follow.assert_not_called()
+        self.assertEqual(recovered, [True])
+        for message in ({"type": "wake", "zone": "UTC"}, {"type": "wake", "time": 1792335311},
+                        {"type": "clock"}, ["wake"]):
+            with self.subTest(message=message), self.assertRaises(ValueError):
+                self.module.handle(message, recover=lambda: recovered.append(message))
+        self.assertEqual(recovered, [True])
 
     def test_mode_is_readable_by_the_desktop_picker(self):
         self.link("Asia/Tokyo")
@@ -885,6 +1114,13 @@ class Hyprland(unittest.TestCase):
         profile = (FILES / "usr/share/try-omarchy/hyprland.lua").read_text()
         handler = profile[profile.index('hl.on("window.destroy"'):]
         self.assertIn("invisible = true", handler[:200])
+
+    def test_italian_on_apple_models_is_current_qwerty(self):
+        # xkeyboard-config's Apple Italian is the old QZERTY layout, where M types
+        # a comma; guest/tests/package-install.sh compiles the keymaps.
+        symbols = (FILES / "etc/xkb/symbols/macintosh_vndr/it").read_text()
+        self.assertEqual(re.findall(r'^default\s+xkb_symbols "(\w+)"', symbols, re.M), ["basic"])
+        self.assertIn('include "it(basic)"', symbols)
 
 
 class AuthenticationState(unittest.TestCase):

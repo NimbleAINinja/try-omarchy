@@ -304,4 +304,10 @@ enum StartMenuPresentation {
         default: return "\(staysWithMacOS) · \(goesToOmarchy)."
         }
     }
+
+    static func notchDetail(isEnabled: Bool) -> String {
+        isEnabled
+            ? "Full Screen fills the area beside the notch, with Omarchy’s bar around it."
+            : "Full Screen stays below the notch, like other Mac apps."
+    }
 }
