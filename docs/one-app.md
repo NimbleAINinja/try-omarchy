@@ -106,10 +106,10 @@ Done, on the installer trial branches:
 
 Next, in this repository:
 
-1. The settings bridge and the launcher window in the run mode, named after the product.
-2. Settings stored in the VM's folder, and the run mode reading them.
-3. The kit as helpers without a bundle identity, and the product name, icon and menus in the QEMU window.
-4. The kit signed and notarized by its release, with a version the installer can compare.
+1. Done: the settings bridge and the launcher window in the run mode, named after the product.
+2. Done: settings stored in the VM's folder, and the run mode reading them.
+3. The kit as helpers without a bundle identity. Done: the product name, icon and menus in the QEMU window.
+4. The kit signed and notarized by its release. Done: a version the installer can compare, in the kit's manifest.
 5. The daemon registration for bridged networking under another identity.
 6. When the one app ships with settings: stop publishing the DMG, and move the manual.
 

@@ -156,9 +156,11 @@ versioned `settings.json` file at the workspace's root
 (`LauncherSettingsFile.swift`), so they move and are deleted with the VM, and
 the run mode reads them under any app's identity
 ([VM kit](../docs/vm-kit.md#settings)). Both files are private and ignored when
-they are not. Until the launcher has marked a new workspace, and for audio
-devices, settings stay in `UserDefaults`; the app moves its older
-`UserDefaults` values into the files once, when the files are missing.
+they are not; an unreadable folder choice stops the launch rather than
+opening the default folder. Until the launcher has marked a new workspace, and
+for audio devices, settings stay in `UserDefaults`. Each older `UserDefaults`
+value moves into the files the first time a file lacks it, except into a
+workspace set by `OMARCHY_QEMU_GPU_STATE_ROOT`.
 
 **Skip launcher** is stored in the versioned `launcher-settings.json` file at
 that workspace's root (normally `~/Library/Application Support/Try Omarchy/VM/v1`).
