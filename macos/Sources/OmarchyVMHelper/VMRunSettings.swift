@@ -144,8 +144,6 @@ final class VMRunSettingsWindow {
         activationController.setDesiredPolicy(.prohibited)
     }
 
-    var isVisible: Bool { startMenuWindow?.window.isVisible == true }
-
     func show() -> Bool {
         activationController.setDesiredPolicy(.regular)
         if let startMenuWindow, startMenuWindow.window.isVisible || startMenuWindow.window.isMiniaturized {
