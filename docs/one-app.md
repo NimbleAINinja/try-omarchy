@@ -124,7 +124,7 @@ Next, in the installer:
 
 ## Testing
 
-- This repository: `make test` keeps the client's contract tests against the run mode, and `make e2e` boots the app's VM through the run mode. The settings window in the run mode is checked by hand from Omarchy's Setup menu.
+- This repository: `make test` keeps the client's contract tests against the run mode and starts the run mode as a real process, CI builds and checks the kit, and `make e2e` boots the app's VM through the run mode. The settings window in the run mode is checked by hand from Omarchy's Setup menu.
 - The installer: `TrialSessionTests` grow to cover the choice, the remembered choice, the menu items and the pages for an unsupported Mac and an installed one. The assembly test checks the kit's signature under the installer's identity. Kit fetching gets tests for the digest, signature and version checks against fixtures.
 - By hand on a Mac: the first launch on a supported Mac, an unsupported one and one with Omarchy installed; a second launch with a VM; Install on this Mac from the running page and the menu; the settings window from the Setup menu and a setting that applies at the next start; a fetched kit taking over at the next start; Delete Virtual Machine; and the lock error with Try Omarchy running.
 

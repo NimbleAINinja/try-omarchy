@@ -148,7 +148,7 @@ packages must keep working with a newer app, and the reverse.
 
 ## macOS compatibility validation
 
-Run `make test` and `make runtime` on macOS 15 and 26 (both covered by CI).
+Run `make test` and `make runtime` on macOS 15 and 26 (both covered by CI, which also builds and checks the kit from that runtime).
 The runtime build runs the pinned VirGL dual-source shader
 and blend-state regression tests and rejects bundled Mach-O files targeting a
 version newer than 15.0 or strongly importing `strchrnul` (introduced in 15.4).

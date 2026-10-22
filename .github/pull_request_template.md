@@ -9,5 +9,6 @@
 
 - [ ] One concern
 - [ ] No files owned by Omarchy are edited. If the guest package changed, its `pkgrel` is bumped
+- [ ] A new build step, protocol, file format or script has a check in CI
 - [ ] `make e2e` passes, if this changes the app, runtime, launcher or bridges (CI cannot boot the VM)
 - [ ] No secrets or personal data in the code, logs or captures

@@ -65,10 +65,13 @@ make help        # every target
 
 | Level | Where | Covers |
 | --- | --- | --- |
-| `make test` | Any Mac, and CI on macOS 15 and 26 | Unit and contract tests. CI also builds the runtime |
+| `make test` | Any Mac, and CI on macOS 15 and 26 | Unit and contract tests, and the run mode started as a real process with a launcher that runs no VM (`run-mode.test.sh`) |
+| Build | CI on macOS 15 and 26 | The runtime (`make runtime`), and the kit built from it and checked with `make test-kit` |
 | Guest checks | CI on Linux | The package on today's Omarchy: install, upgrade, and the desktop on a virtual display |
 | Nightly | CI on Linux | The same guest checks on a fresh image from live Omarchy, which catches upstream changes early |
 | `make e2e` | An Apple Silicon Mac | The real VM, which CI cannot boot: the GPU, the bridges, the shared folder, a second boot |
+
+Every mechanism ships with its check in CI. A PR that adds a build step, a protocol, a file format or a script adds a CI check for it. CI covers everything that can be checked without booting the VM. `make e2e` is the only exception, and the PR says whether it ran.
 
 Run `make e2e` before opening a PR that changes the app, the VM or the bridges. Tests check behaviour, never pixels or timing.
 
