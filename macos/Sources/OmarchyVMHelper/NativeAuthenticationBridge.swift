@@ -11,16 +11,18 @@ enum NativeAuthenticationOperation: String, Equatable {
     case sudo
     case onePasswordUnlock = "onepassword-unlock"
 
-    var localizedReason: String {
+    var localizedReason: String { localizedReason(productName: ProductName.current) }
+
+    func localizedReason(productName: String) -> String {
         switch self {
         case .disable:
-            "Disable Touch ID for sudo in this Try Omarchy guest"
+            "Disable Touch ID for sudo in this \(productName) guest"
         case .enroll:
-            "Pair this Try Omarchy guest for Touch ID sudo testing"
+            "Pair this \(productName) guest for Touch ID sudo testing"
         case .sudo:
-            "Approve sudo in the focused Try Omarchy guest"
+            "Approve sudo in the focused \(productName) guest"
         case .onePasswordUnlock:
-            "Unlock 1Password in the focused Try Omarchy guest"
+            "Unlock 1Password in the focused \(productName) guest"
         }
     }
 }

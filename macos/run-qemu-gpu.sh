@@ -185,6 +185,12 @@ open_storage() {
   disk="$vm_dir/disk.img"
   vars="$vm_dir/efi-vars.fd"
   metadata="$vm_dir/vm.json"
+  # Another app's newer core may have written a layout this one does not know.
+  # It refuses that VM rather than migrating it.
+  if [[ -f $metadata && ! -L $metadata ]]; then
+    layout=$(/usr/bin/plutil -extract format raw -o - "$metadata" 2>/dev/null) || layout=1
+    [[ $layout == 1 ]] || fail "this VM uses a storage layout this version does not know; update the app"
+  fi
 }
 
 reset_vm() {
@@ -216,6 +222,19 @@ for device in hda-micro intel-hda virtconsole virtserialport virtio-balloon-pci 
   virtio-serial-pci virtio-tablet-pci virtio-pinch-pci qemu-xhci usb-kbd; do
   require_qemu_device "$device"
 done
+
+# --- bridges -----------------------------------------------------------------
+# Audio and the guest status always run. The app that starts the VM chooses
+# the others; without settings the guest has no settings port, so Omarchy's
+# Setup menu shows no row for an app that cannot open them.
+enabled_bridges=${OMARCHY_QEMU_GPU_BRIDGES-clipboard authentication camera battery timezone settings}
+for bridge in $enabled_bridges; do
+  case $bridge in
+    clipboard | authentication | camera | battery | timezone | settings) ;;
+    *) fail "OMARCHY_QEMU_GPU_BRIDGES names an unknown bridge: $bridge" ;;
+  esac
+done
+bridge_enabled() { [[ " $enabled_bridges " == *" $1 "* ]]; }
 
 # --- resources ---------------------------------------------------------------
 host_cpu_count=$(sysctl -n hw.logicalcpu)
@@ -687,13 +706,17 @@ qemu_args=(
   -device 'virtserialport,bus=omarchy-serial.0,nr=4,chardev=omarchy-camera-bridge,name=dev.tryomarchy.camera'
   -chardev "socket,id=omarchy-guest-status,path=$guest_socket,server=on,wait=off"
   -device 'virtserialport,bus=omarchy-serial.0,nr=5,chardev=omarchy-guest-status,name=dev.tryomarchy.guest'
-  -chardev "socket,id=omarchy-settings-bridge,path=$settings_socket,server=on,wait=off"
-  -device 'virtserialport,bus=omarchy-serial.0,nr=6,chardev=omarchy-settings-bridge,name=dev.tryomarchy.settings'
   -chardev "socket,id=omarchy-battery-bridge,path=$battery_socket,server=on,wait=off"
   -device 'virtserialport,bus=omarchy-serial.0,nr=7,chardev=omarchy-battery-bridge,name=dev.tryomarchy.battery'
   -chardev "socket,id=omarchy-timezone-bridge,path=$timezone_socket,server=on,wait=off"
   -device 'virtserialport,bus=omarchy-serial.0,nr=8,chardev=omarchy-timezone-bridge,name=dev.tryomarchy.timezone'
 )
+if bridge_enabled settings; then
+  qemu_args+=(
+    -chardev "socket,id=omarchy-settings-bridge,path=$settings_socket,server=on,wait=off"
+    -device 'virtserialport,bus=omarchy-serial.0,nr=6,chardev=omarchy-settings-bridge,name=dev.tryomarchy.settings'
+  )
+fi
 
 if [[ -n $package_to_install ]]; then
   qemu_args+=(
@@ -751,7 +774,7 @@ qemu_pid=$!
 printf '%s\n' "$qemu_pid" >"$work_dir/.qemu.pid"
 
 for ((attempt = 0; attempt < 200; attempt++)); do
-  [[ -S $qmp_socket && -S $guest_socket && -S $settings_socket ]] && break
+  [[ -S $qmp_socket && -S $guest_socket ]] && { ! bridge_enabled settings || [[ -S $settings_socket ]]; } && break
   kill -0 "$qemu_pid" 2>/dev/null || fail "QEMU exited before it was ready"
   sleep 0.05
 done
@@ -765,8 +788,13 @@ echo "[qemu-gpu] Ready. QMP: $qmp_socket" >&2
 # feature stays unavailable for the rest of the session.
 status_file="$vm_dir/guest-status.json"
 [[ $storage_mode == persistent ]] || status_file="$work_dir/guest-status.json"
-bridge_names=(audio clipboard authentication camera battery timezone guest-status)
-bridge_restarts=(0 0 0 0 0 0 0)
+bridge_names=(audio)
+for bridge in clipboard authentication camera battery timezone; do
+  bridge_enabled "$bridge" && bridge_names+=("$bridge")
+done
+bridge_names+=(guest-status)
+bridge_restarts=()
+for _ in "${bridge_names[@]}"; do bridge_restarts+=(0); done
 start_bridge() { # index
   case ${bridge_names[$1]} in
     audio) "$native_bridge" --bridge-native-audio "$qemu_pid" "$audio_socket" "$audio_routes" 9>&- & ;;

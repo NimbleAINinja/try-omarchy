@@ -1,0 +1,297 @@
+import Foundation
+import Testing
+@testable import OmarchyVMHelper
+import TryOmarchyKitClient
+
+struct VMRunProtocolTests {
+    @Test func everyEventRoundTrips() throws {
+        let events: [VMRunEvent] = [
+            .progress(.downloading, percent: 42),
+            .progress(.checking, percent: nil),
+            .ready,
+            .stopping,
+            .error(VMRunError(code: .vmAlreadyOpen, message: "Omarchy is open in Try Omarchy.")),
+            .exited(status: 0),
+            .exited(status: 143),
+        ]
+        for event in events {
+            let line = try event.encodedLine()
+            #expect(line.last == 0x0A)
+            #expect(!line.dropLast().contains(0x0A))
+            #expect(try VMRunEvent.decode(line: line) == event)
+        }
+        for phase in VMRunPhase.allCases {
+            #expect(try VMRunEvent.decode(line: VMRunEvent.progress(phase, percent: 1).encodedLine())
+                == .progress(phase, percent: 1))
+        }
+        for code in VMRunErrorCode.allCases {
+            let event = VMRunEvent.error(VMRunError(code: code, message: code.rawValue))
+            #expect(try VMRunEvent.decode(line: event.encodedLine()) == event)
+        }
+    }
+
+    @Test func eventsAreValidatedStrictly() {
+        let invalid = [
+            #"{"version":2,"event":"ready"}"#,
+            #"{"event":"ready"}"#,
+            #"{"version":1,"event":"ready","extra":1}"#,
+            #"{"version":1,"event":"launched"}"#,
+            #"{"version":1,"event":"progress","phase":"downloading","percent":101}"#,
+            #"{"version":1,"event":"progress","phase":"downloading","percent":4.5}"#,
+            #"{"version":1,"event":"progress","phase":"downloading","percent":true}"#,
+            #"{"version":1,"event":"progress","phase":"teleporting"}"#,
+            #"{"version":1,"event":"error","code":"gone","message":"x"}"#,
+            #"{"version":1,"event":"error","code":"qemu-exited"}"#,
+            #"{"version":1,"event":"exited","status":256}"#,
+            #"{"version":1,"event":"exited","status":"0"}"#,
+            #"["version",1]"#,
+            "not json",
+            #"{"version":1,"event":"ready"}"# + "\n" + #"{"version":1,"event":"ready"}"#,
+            #"{"version":1,"event":"error","code":"qemu-exited","message":""#
+                + String(repeating: "x", count: VMRunProtocol.maximumLineBytes) + #""}"#,
+        ]
+        for line in invalid {
+            #expect(throws: (any Error).self) { try VMRunEvent.decode(line: Data(line.utf8)) }
+        }
+    }
+
+    @Test func configurationRoundTripsAndRejectsUnsafeValues() throws {
+        let configuration = VMRunConfiguration(
+            productName: "Omarchy Installer",
+            storageRoot: "/Users/someone/VM",
+            bridges: [.clipboard, .camera],
+            memoryMiB: 8_192,
+            cpus: 4
+        )
+        #expect(try VMRunConfiguration.decode(line: configuration.encodedLine()) == configuration)
+        let defaults = VMRunConfiguration(productName: "Omarchy Installer")
+        #expect(try VMRunConfiguration.decode(line: defaults.encodedLine()) == defaults)
+        #expect(defaults.bridges == VMRunBridge.allCases)
+        #expect(defaults.network == .shared)
+
+        var invalid: [VMRunConfiguration] = []
+        for change: (inout VMRunConfiguration) -> Void in [
+            { $0.productName = "" },
+            { $0.productName = " Padded" },
+            { $0.productName = "Two\nlines" },
+            { $0.storageRoot = "relative/VM" },
+            { $0.storageRoot = "/a\nb" },
+            { $0.bridges = [.camera, .camera] },
+            { $0.memoryMiB = 512 },
+            { $0.cpus = 0 },
+        ] {
+            var copy = defaults
+            change(&copy)
+            invalid.append(copy)
+        }
+        for configuration in invalid {
+            #expect(throws: VMRunProtocolError.invalidConfiguration) { try configuration.encodedLine() }
+        }
+        for line in [
+            #"{"version":1,"productName":"x","bridges":["settings"],"network":"shared"}"#,
+            #"{"version":1,"productName":"x","bridges":[],"network":"shared","sharedFolder":"/"}"#,
+            #"{"version":1,"productName":"x","bridges":[],"network":"host"}"#,
+            #"{"version":2,"productName":"x","bridges":[],"network":"shared"}"#,
+        ] {
+            #expect(throws: (any Error).self) { try VMRunConfiguration.decode(line: Data(line.utf8)) }
+        }
+    }
+
+    @Test func commandsAreValidated() throws {
+        #expect(try VMRunCommand.decode(line: VMRunCommand.shutdown.encodedLine()) == .shutdown)
+        #expect(throws: VMRunProtocolError.invalidCommand) {
+            try VMRunCommand.decode(line: Data(#"{"version":1,"command":"reboot"}"#.utf8))
+        }
+    }
+}
+
+struct VMRunFailureTests {
+    private static let script = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("run-qemu-gpu.sh")
+
+    @Test func launcherFailuresMapToStableCodes() throws {
+        let cases: [(String, VMRunErrorCode)] = [
+            ("this VM is already open", .vmAlreadyOpen),
+            ("the Omarchy VM requires an APFS volume; /Volumes/USB is on exfat", .volumeNotAPFS),
+            ("requires macOS 15 or newer", .macOSTooOld),
+            ("requires an Apple Silicon Mac", .hypervisorUnavailable),
+            ("not enough free space for the Omarchy VM: 9000 MiB required, 10 MiB available", .notEnoughSpace),
+            ("the Omarchy factory image is damaged: /x.img.zst", .imageDigestMismatch),
+            ("this VM uses a storage layout this version does not know; update the app", .storageLayoutUnknown),
+            ("the VM storage folder is not owned by this user: /x", .storageUnavailable),
+            ("QEMU exited before it was ready", .qemuExited),
+            ("could not decompress the factory disk", .launchFailed),
+        ]
+        let script = try String(contentsOf: Self.script, encoding: .utf8)
+        for (line, code) in cases {
+            let error = VMRunFailure.error(standardError: "[qemu-gpu] Launch phase: checking\nrun-qemu-gpu: \(line)\n",
+                                           status: 1, reachedStart: false)
+            #expect(error.code == code, "\(line)")
+            let stable = line.components(separatedBy: [":", ";"]).first!
+                .replacingOccurrences(of: "15 or newer", with: "")
+            #expect(script.contains(stable), "run-qemu-gpu.sh no longer says: \(stable)")
+        }
+        #expect(VMRunFailure.error(standardError: "Error: HV_UNSUPPORTED\n", status: 1, reachedStart: false).code
+            == .hypervisorUnavailable)
+        #expect(VMRunFailure.error(standardError: "run-qemu-gpu: this VM is already open\n", status: 1, reachedStart: true).code
+            == .qemuExited)
+    }
+
+    @Test func downloadFailuresMapToStableCodes() {
+        #expect(VMRunFailure.error(for: FactoryDownloadError.damaged, productName: "X").code == .imageDigestMismatch)
+        #expect(VMRunFailure.error(for: FactoryDownloadError.insufficientSpace(needed: 2, available: 1), productName: "X").code
+            == .notEnoughSpace)
+        #expect(VMRunFailure.error(for: FactoryDownloadError.diskFull(downloaded: 1), productName: "X").code == .notEnoughSpace)
+        #expect(VMRunFailure.error(for: FactoryDownloadError.connection("offline"), productName: "X").code == .downloadFailed)
+        #expect(VMRunFailure.error(for: FactoryDownloadError.unavailable(statusCode: 404), productName: "X").code
+            == .downloadFailed)
+    }
+
+    @Test func everyProgressPhaseHasAProtocolPhase() {
+        for phase in VMLaunchPhase.allCases {
+            #expect(VMRunPhase(rawValue: phase.rawValue) != nil, "\(phase)")
+        }
+        for phase in [FactoryDownloadProgress.Phase.waiting, .downloading, .retrying, .paused, .verifying] {
+            _ = VMRunFailure.phase(phase)
+        }
+    }
+}
+
+/// The client against a helper that speaks the protocol, and against the real
+/// helper's run mode.
+struct VMRunClientTests {
+    private final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var events: [VMRunEvent] = []
+        private let done = DispatchSemaphore(value: 0)
+        var onEvent: (@Sendable (VMRunEvent) -> Void)?
+
+        func record(_ event: VMRunEvent) {
+            lock.withLock { events.append(event) }
+            onEvent?(event)
+            if case .exited = event { done.signal() }
+        }
+
+        func wait() -> [VMRunEvent] {
+            _ = done.wait(timeout: .now() + 20)
+            return lock.withLock { events }
+        }
+    }
+
+    private func fakeKit(helper: String) throws -> (TryOmarchyKit, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vm-run-\(UUID().uuidString)")
+        let kit = root.appendingPathComponent(TryOmarchyKit.bundleName, isDirectory: true)
+        let macOS = kit.appendingPathComponent("Contents/MacOS", isDirectory: true)
+        try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+        let executable = macOS.appendingPathComponent(TryOmarchyKit.helperName)
+        try Data(helper.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return (TryOmarchyKit(bundleURL: kit), root)
+    }
+
+    @Test func followsEventsAndShutsDown() throws {
+        let (kit, root) = try fakeKit(helper: """
+            #!/bin/bash
+            [[ $1 == --run-vm ]] || exit 64
+            IFS= read -r config
+            [[ $config == *'"productName":"Omarchy Installer"'* && $config != *settings* ]] || exit 65
+            echo '{"version":1,"event":"progress","phase":"downloading","percent":10}'
+            echo '{"version":1,"event":"ready"}'
+            IFS= read -r command
+            [[ $command == '{"command":"shutdown","version":1}' ]] || exit 66
+            echo '{"version":1,"event":"stopping"}'
+            echo '{"version":1,"event":"exited","status":0}'
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = VMRunClient(kit: kit)
+        let recorder = Recorder()
+        recorder.onEvent = { event in if event == .ready { client.shutDown() } }
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { recorder.record($0) }
+        #expect(recorder.wait() == [.progress(.downloading, percent: 10), .ready, .stopping, .exited(status: 0)])
+    }
+
+    @Test func reportsAnExitWithoutTheLastEvent() throws {
+        let (kit, root) = try fakeKit(helper: "#!/bin/bash\nread -r config\nexit 3\n")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = VMRunClient(kit: kit)
+        let recorder = Recorder()
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { recorder.record($0) }
+        #expect(recorder.wait() == [.exited(status: 3)])
+        #expect(!client.isRunning)
+    }
+
+    @Test func stopsAHelperThatBreaksTheProtocol() throws {
+        let (kit, root) = try fakeKit(helper: """
+            #!/bin/bash
+            read -r config
+            trap 'exit 143' TERM
+            echo '{"version":1,"event":"teleported"}'
+            while :; do sleep 0.1; done
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = VMRunClient(kit: kit)
+        let recorder = Recorder()
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { recorder.record($0) }
+        let events = recorder.wait()
+        #expect(events.count == 2)
+        guard case .error(let error) = events.first else { Issue.record("no error: \(events)"); return }
+        #expect(error.code == .launchFailed)
+        #expect(events.last == .exited(status: 143))
+    }
+
+    @Test func refusesAMissingKit() {
+        let client = VMRunClient(kit: TryOmarchyKit(bundleURL: URL(fileURLWithPath: "/nonexistent/Try Omarchy Kit.app")))
+        #expect(throws: VMRunError.self) {
+            try client.start(VMRunConfiguration(productName: "Omarchy Installer")) { _ in }
+        }
+    }
+
+    @Test func cleansTheLaunchersTestSettings() {
+        let environment = VMRunClient.cleanEnvironment([
+            "HOME": "/Users/x", "OMARCHY_QEMU_GPU_STATE_ROOT": "/tmp/x", "TRYOMARCHY_NOTCH": "0",
+            "SDL_AUDIO_DEVICE_NAME": "x", "PATH": "/usr/bin",
+        ])
+        #expect(environment == ["HOME": "/Users/x", "PATH": "/usr/bin"])
+    }
+
+    private static let helper = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent(".build/debug/omarchy-vm-helper")
+
+    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: helper.path)))
+    func theHelpersRunModeSpeaksTheProtocol() throws {
+        let (kit, root) = try fakeKit(helper: "")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try kit.helperURL()
+        try FileManager.default.removeItem(at: executable)
+        try FileManager.default.copyItem(at: Self.helper, to: executable)
+
+        // A kit without its launch scripts fails cleanly, in the protocol.
+        let client = VMRunClient(kit: kit)
+        let recorder = Recorder()
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { recorder.record($0) }
+        let events = recorder.wait()
+        guard case .error(let error) = events.first else { Issue.record("no error: \(events)"); return }
+        #expect(error.code == .launchFailed)
+        #expect(events.last == .exited(status: 1))
+
+        let process = Process()
+        let input = Pipe()
+        let output = Pipe()
+        process.executableURL = executable
+        process.arguments = ["--run-vm"]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: Data(#"{"version":1,"productName":"x","bridges":["settings"],"network":"shared"}"#.utf8 + [0x0A]))
+        process.waitUntilExit()
+        let lines = output.fileHandleForReading.readDataToEndOfFile().split(separator: 0x0A)
+        #expect(try lines.map { try VMRunEvent.decode(line: Data($0)) } == [
+            .error(VMRunError(code: .invalidConfiguration, message: "The run mode configuration is invalid.")),
+            .exited(status: 64),
+        ])
+        #expect(process.terminationStatus == 64)
+    }
+}

@@ -232,6 +232,20 @@ assert_contains "$output" "ignoring unexpected display cutouts"
 assert_not_contains "$(grep "host settings:" <<<"$output")" "tryomarchy.display_cutouts"
 assert_not_contains "$(grep "host settings:" <<<"$output")" "ssh_from"
 
+# --- an app without settings leaves the settings port out ----------------------------
+output=$(OMARCHY_QEMU_GPU_BRIDGES='clipboard authentication camera battery timezone' launch)
+assert_not_contains "$output" "dev.tryomarchy.settings"
+assert_contains "$output" "name=dev.tryomarchy.clipboard"
+output=$(OMARCHY_QEMU_GPU_BRIDGES='clipboard network' launch) && fail "an unknown bridge launched"
+assert_contains "$output" "OMARCHY_QEMU_GPU_BRIDGES names an unknown bridge: network"
+
+# --- a storage layout from a newer core is refused, not migrated --------------------
+cp "$state/shell/vm.json" "$test_root/vm.json"
+printf '{"format":2,"kind":"upstream-shell-vm"}\n' >"$state/shell/vm.json"
+output=$(launch) && fail "an unknown storage layout launched"
+assert_contains "$output" "this VM uses a storage layout this version does not know"
+mv "$test_root/vm.json" "$state/shell/vm.json"
+
 # --- the VM persists; the package offer can be turned off --------------------------
 printf 'guest data' | dd of="$state/shell/disk.img" conv=notrunc 2>/dev/null
 launch_env=(OMARCHY_SHELL_INSTALL_PACKAGE=)

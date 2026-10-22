@@ -136,7 +136,7 @@ final class LauncherState {
         guard launchInProgress else { return nil }
         if let launchDownload {
             switch launchDownload.phase {
-            case .downloading, .retrying: return Double(launchDownload.percent) / 100
+            case .downloading, .retrying, .paused: return Double(launchDownload.percent) / 100
             case .waiting, .verifying: return nil
             }
         }

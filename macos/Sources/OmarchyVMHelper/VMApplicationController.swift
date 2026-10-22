@@ -46,10 +46,9 @@ final class HostPowerNotificationObserver {
 
 @MainActor
 final class VMApplicationController: NSObject, NSApplicationDelegate {
-    private let launcherURL: URL
     private let initialArguments: [String]
     private let baseEnvironment: [String: String]
-    private let supervisor: QEMUGPUProcessSupervisor
+    private let session: VMRunSession
     private let preferenceStore: AudioRoutingPreferenceStore
     private let sharedFolderStore: SharedFolderPreferenceStore
     private let usbDeviceStore: USBDevicePreferenceStore
@@ -64,34 +63,17 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     private let volumeRootDetector: VolumeRootDetecting
     private let deviceProvider: HostAudioDeviceProviding
     private let bundledMetrics: BundledGuestMetrics?
-    private let factoryManifest: FactoryDownloadManifest?
-    private let bundlesFactoryImage: Bool
-    private var factoryDownloader: FactoryImageDownloader?
-    /// Where this launch's downloaded image lives, cleaned once the VM runs.
-    private var launchedFactoryDirectories: [URL] = []
     private var startMenuWindow: StartMenuWindow?
     private var settingsBridge: NativeSettingsBridge?
-    private var controlSocketPath: String?
     private let disposableWorkspace = DisposableVMWorkspace()
     private var isDisposable: Bool { initialArguments.first == QEMUGPUStorageOption.ephemeral.rawValue }
     private var settingsReturnApplication: NSRunningApplication?
     private let appReleaseChecker: AppReleaseChecker
     private var appReleaseWindow: AppReleaseWindow?
     private var appReleasePromptScheduled = false
-    private var volumeObserver: NSObjectProtocol?
-    private var hostPowerObserver: HostPowerNotificationObserver?
-    private let hostSleepCoordinator = VMHostSleepCoordinator()
-
-    /// The workspace the running VM is writing to, so an unmount of its volume
-    /// can be recognized as the disk disappearing under QEMU.
-    private var activeStateRoot: String?
-
-    private var lifecycle = VMRunLifecycle()
     private let activationController = ApplicationActivationController()
-    private var childRunning = false
     private var applicationTerminationPending = false
-    private var virtualMachineReachedStart = false
-    private var pendingHostSleepControlFailure: String?
+    private var lifecycle: VMRunLifecycle { session.lifecycle }
 
     /// True while a modal alert this controller opened itself (rather than
     /// AppKit) is on screen awaiting a click. `finish()`'s watchdog checks
@@ -124,10 +106,15 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         bundlesFactoryImage: Bool = QEMUGPUStorageSpaceEstimate.bundlesFactoryImage(),
         appReleaseChecker: AppReleaseChecker? = nil
     ) {
-        self.launcherURL = launcherURL
         self.initialArguments = initialArguments
         self.baseEnvironment = baseEnvironment
-        self.supervisor = supervisor
+        self.session = VMRunSession(
+            launcherURL: launcherURL,
+            supervisor: supervisor,
+            factoryManifest: factoryManifest,
+            bundlesFactoryImage: bundlesFactoryImage,
+            bundledMetrics: bundledMetrics
+        )
         self.preferenceStore = preferenceStore
         self.sharedFolderStore = sharedFolderStore
         self.usbDeviceStore = usbDeviceStore
@@ -142,8 +129,6 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         self.volumeRootDetector = volumeRootDetector
         self.deviceProvider = deviceProvider
         self.bundledMetrics = bundledMetrics
-        self.factoryManifest = factoryManifest
-        self.bundlesFactoryImage = bundlesFactoryImage
         self.appReleaseChecker = appReleaseChecker ?? AppReleaseChecker()
     }
 
@@ -153,8 +138,8 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             self?.appReleaseWindow?.refresh()
             self?.scheduleAppReleasePrompt()
         }
-        observeVolumeUnmounts()
-        observeHostPowerEvents()
+        session.onEvent = { [weak self] event in self?.handle(event) }
+        session.observeHost()
         let startupRoot = startupPreferenceRoot()
         let startAutomatically = StartupPolicy.shouldStartAutomatically(
             isEnabled: startupPreferenceStore.load(storageRoot: startupRoot),
@@ -204,7 +189,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) {
-        if childRunning {
+        if session.isRunning {
             _ = showRunningSettings()
         } else if !lifecycle.isStopping && !isPresentingBlockingAlert {
             startMenuWindow?.bringToFront()
@@ -392,9 +377,6 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     }
 
     private func startVirtualMachine() {
-        cancelHostWakeRetry()
-        virtualMachineReachedStart = false
-        pendingHostSleepControlFailure = nil
         do {
             if isDisposable { _ = try disposableWorkspace.prepare() }
             let accessibilityDecision = AccessibilityLaunchDecision.make(
@@ -426,10 +408,41 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             guard cameraDecision.allowsLaunch else {
                 throw HelperError.io("camera policy unexpectedly prevented launch")
             }
-            if try beginFactoryDownloadIfNeeded() { return }
-            try launch(arguments: launchArguments())
+            session.start(arguments: launchArguments(), context: { [weak self] in
+                self?.runContext() ?? VMRunSession.LaunchContext(environment: [:], stateRoot: nil,
+                    storageUnavailableReason: "The VM controller is unavailable.", mayCreateFactoryRoot: false)
+            }, beforeLaunch: { [weak self] context in
+                if context.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue {
+                    try NetworkService.prepare()
+                    try NetworkService.verifyConnection()
+                }
+                try PortForwardAvailability.validate(self?.childLaunchContext().portForwardMappings ?? [])
+            })
         } catch {
             failLaunch(error)
+        }
+    }
+
+    private func handle(_ event: VMRunSession.Event) {
+        switch event {
+        case .downloadProgress(let progress):
+            startMenuWindow?.launchDidDownload(progress)
+        case .downloadFinished:
+            startMenuWindow?.launchDidFinishDownload()
+        case .downloadCancelled:
+            startMenuWindow?.launchDidAbort()
+        case .launchProgress(let progress):
+            startMenuWindow?.launchDidProgress(to: progress)
+        case .ready(let qmpSocketPath):
+            virtualMachineDidStart(qmpSocketPath: qmpSocketPath)
+        case .launchFailed(let error):
+            failLaunch(error)
+        case .hostWakeFailed(let error):
+            presentHostWakeRecovery(error: error)
+        case .volumeUnmounted:
+            presentVolumeUnmountAlert()
+        case .exited(let exit):
+            childDidExit(exit)
         }
     }
 
@@ -463,26 +476,21 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if workspaceTransferProcess != nil { return .terminateCancel }
-        // What was downloaded stays for the next launch to resume.
-        factoryDownloader?.cancel()
-        guard childRunning else { return .terminateNow }
+        session.cancelDownload()
+        guard session.isRunning else { return .terminateNow }
         guard !applicationTerminationPending else { return .terminateLater }
 
-        cancelHostWakeRetry()
         applicationTerminationPending = true
-        lifecycle.requestQuit()
-        supervisor.forward(signal: SIGTERM)
+        session.quit()
         return .terminateLater
     }
 
     func handleTerminationSignal(_ signal: Int32) {
         if workspaceTransferProcess?.isRunning == true { workspaceTransferProcess?.terminate() }
         guard !applicationTerminationPending else { return }
-        cancelHostWakeRetry()
-        lifecycle.requestTermination(signal: signal)
-        if childRunning {
-            supervisor.forward(signal: signal)
-        } else {
+        let wasRunning = session.isRunning
+        session.terminate(signal: signal)
+        if !wasRunning {
             finish(status: 128 + signal)
         }
     }
@@ -494,6 +502,16 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         /// Set when a chosen data folder could not be validated. Starting the
         /// launcher anyway would silently retarget the default workspace.
         let storageUnavailableReason: String?
+    }
+
+    private func runContext() -> VMRunSession.LaunchContext {
+        let context = childLaunchContext()
+        return VMRunSession.LaunchContext(
+            environment: context.environment,
+            stateRoot: context.stateRoot,
+            storageUnavailableReason: context.storageUnavailableReason,
+            mayCreateFactoryRoot: storageLocationStore.load().isDefault || storageEnvironmentOverride != nil
+        )
     }
 
     private func networkIdentityOperation(_ arguments: [String]) throws -> String {
@@ -603,146 +621,13 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         )
     }
 
-    /// The factory a new VM disk needs, for this launch's storage folder.
-    private func factoryImagePreparation(_ context: ChildLaunchContext) -> FactoryImagePreparation {
-        guard context.storageUnavailableReason == nil, let stateRoot = context.stateRoot else {
-            return .ready(image: nil)
-        }
-        return FactoryImagePreparation.plan(
-            manifest: factoryManifest,
-            bundlesImage: bundlesFactoryImage,
-            stateRoot: URL(fileURLWithPath: stateRoot, isDirectory: true),
-            sharedFactory: context.environment[QEMUGPURuntimeEnvironment.factoryCacheKey]
-                .map { URL(fileURLWithPath: $0, isDirectory: true) }
-        )
-    }
-
-    /// Downloads the factory image before a launch that creates a VM, then
-    /// launches. Returns false when the launch can go ahead now.
-    private func beginFactoryDownloadIfNeeded() throws -> Bool {
-        guard factoryDownloader == nil, let manifest = factoryManifest else { return false }
-        let context = childLaunchContext()
-        guard case .download(var directory) = factoryImagePreparation(context) else { return false }
-        let stateRoot = URL(fileURLWithPath: context.stateRoot!, isDirectory: true)
-        let localFactory = stateRoot.appendingPathComponent(VMWorkspaceTransfer.factoryCacheName, isDirectory: true)
-        do {
-            // A disposable VM shares the storage folder's copy. A chosen folder
-            // that is missing is never recreated, so the disposable workspace
-            // keeps its own download instead.
-            let mayCreateRoot = directory == localFactory || storageLocationStore.load().isDefault
-                || !(baseEnvironment[StorageLocationPolicy.environmentKey] ?? "").isEmpty
-            try FactoryImageStore.prepareDirectory(directory, mayCreateRoot: mayCreateRoot)
-        } catch where directory != localFactory {
-            directory = localFactory
-            try FactoryImageStore.prepareDirectory(directory, mayCreateRoot: true)
-        }
-        FactoryImageStore.removeObsoleteDownloads(in: directory, identity: manifest.identity)
-        // The launcher then decompresses about half the disk beside it.
-        let reserve = (bundledMetrics?.sourceDiskBytes ?? 0) + StorageSpaceRequirement.headroomBytes
-        let downloader = FactoryImageDownloader(manifest: manifest, directory: directory, reserveBytes: reserve)
-        factoryDownloader = downloader
-        fputs("[download] Preparing the Omarchy image in \(directory.path)\n", stderr)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result {
-                try downloader.run { progress in
-                    DispatchQueue.main.async { self?.startMenuWindow?.launchDidDownload(progress) }
-                }
-            }
-            DispatchQueue.main.async { self?.factoryDownloadDidFinish(downloader, result: result) }
-        }
-        return true
-    }
-
-    private func factoryDownloadDidFinish(_ downloader: FactoryImageDownloader, result: Result<URL, Error>) {
-        guard factoryDownloader === downloader else { return }
-        factoryDownloader = nil
-        switch result {
-        case .success(let image):
-            startMenuWindow?.launchDidFinishDownload()
-            do { try launch(arguments: launchArguments(), downloadedFactoryImage: image) } catch { failLaunch(error) }
-        case .failure(FactoryDownloadError.cancelled):
-            startMenuWindow?.launchDidAbort()
-        case .failure(let error):
-            failLaunch(error)
-        }
-    }
-
-    private func launch(arguments: [String], downloadedFactoryImage: URL? = nil) throws {
-        var context = childLaunchContext()
-        // The UI gate above normally resolves this first; failing closed here
-        // too keeps a silent fallback impossible for any future caller.
-        if let reason = context.storageUnavailableReason {
-            throw HelperError.io(reason)
-        }
-        if context.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue {
-            try NetworkService.prepare()
-            try NetworkService.verifyConnection()
-        }
-        try PortForwardAvailability.validate(context.portForwardMappings)
-        launchedFactoryDirectories = context.stateRoot.map {
-            [URL(fileURLWithPath: $0, isDirectory: true)
-                .appendingPathComponent(VMWorkspaceTransfer.factoryCacheName, isDirectory: true)]
-        } ?? []
-        var factoryImage = downloadedFactoryImage
-        if factoryImage == nil, case .ready(let image?) = factoryImagePreparation(context) {
-            factoryImage = image
-        }
-        if let factoryImage {
-            context.environment[QEMUGPURuntimeEnvironment.factoryImageKey] = factoryImage.path
-            launchedFactoryDirectories.append(factoryImage.deletingLastPathComponent())
-        }
-        activeStateRoot = context.stateRoot
-        try supervisor.start(
-            executableURL: launcherURL,
-            arguments: arguments,
-            environment: context.environment,
-            launchEvent: { [weak self] event in
-                switch event {
-                case .virtualMachineReady(let qmpSocketPath):
-                    self?.virtualMachineDidStart(qmpSocketPath: qmpSocketPath)
-                case .launchProgress(let progress):
-                    self?.startMenuWindow?.launchDidProgress(to: progress)
-                case .resetProgress:
-                    break
-                }
-            }
-        ) { [weak self] status in
-            self?.childDidExit(status: status)
-        }
-        childRunning = true
-    }
-
-    private func virtualMachineDidStart(qmpSocketPath: String?) {
-        guard let qmpSocketPath else {
-            failHostSleepControlSetup(
-                detail: "the launcher did not provide a valid control socket"
-            )
-            return
-        }
-        do {
-            try hostSleepCoordinator.connect(to: qmpSocketPath)
-        } catch {
-            failHostSleepControlSetup(detail: error.localizedDescription)
-            return
-        }
+    private func virtualMachineDidStart(qmpSocketPath: String) {
         if let root = startupPreferenceRoot() {
             do { try startupPreferenceStore.persistPendingChoice(storageRoot: root) }
             catch { fputs("[startup] Could not retain Skip launcher: \(error.localizedDescription)\n", stderr) }
         }
-        virtualMachineReachedStart = true
-        // The launcher has decompressed the factory by now, so a downloaded
-        // image is no longer needed.
-        if let identity = factoryManifest?.identity {
-            let directories = launchedFactoryDirectories
-            DispatchQueue.global(qos: .utility).async {
-                for directory in Set(directories) {
-                    FactoryImageStore.removeObsoleteDownloads(in: directory, identity: identity)
-                }
-            }
-        }
         startMenuWindow?.dismiss()
         activationController.setDesiredPolicy(ApplicationPresentation.runningActivationPolicy)
-        controlSocketPath = qmpSocketPath
         startMenuWindow?.virtualMachineDidStart(
             requestSettingsAction: { [weak self] action in self?.shutDownForSettings(action) },
             closeSettings: { [weak self] in self?.closeRunningSettings() }
@@ -760,7 +645,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     }
 
     private func showRunningSettings() -> Bool {
-        guard childRunning, virtualMachineReachedStart,
+        guard session.isRunning, session.reachedStart,
               (!lifecycle.isStopping || lifecycle.settingsAction != nil),
               !isPresentingBlockingAlert, let startMenuWindow else { return false }
         activationController.reconcile()
@@ -780,37 +665,25 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     }
 
     private func shutDownForSettings(_ action: VMRunLifecycle.SettingsAction) {
-        guard childRunning, virtualMachineReachedStart, !lifecycle.isStopping,
-              let controlSocketPath else { return }
-        guard !hostSleepCoordinator.pausedForHostSleep else {
+        guard session.isRunning, session.reachedStart, !lifecycle.isStopping else { return }
+        guard !session.pausedForHostSleep else {
             startMenuWindow?.shutdownDidFail("Wait for Omarchy to resume after Mac sleep, then try again.")
             return
         }
-        lifecycle.requestSettingsAction(action)
+        session.requestSettingsAction(action)
         startMenuWindow?.shutdownDidBegin()
         do {
-            let connection = try QMPConnection(socketPath: controlSocketPath, identifierPrefix: "settings")
-            _ = try connection.execute("system_powerdown")
             // ACPI asks Linux to shut down cleanly. Only the launcher's exit
             // callback may start the replacement QEMU process; no forced timer.
+            try session.powerDown()
         } catch {
-            lifecycle.cancelSettingsAction()
+            session.cancelSettingsAction()
             startMenuWindow?.shutdownDidFail(error.localizedDescription)
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if !childRunning { disposableWorkspace.remove() }
-    }
-
-    private func failHostSleepControlSetup(detail: String) {
-        fputs(
-            "omarchy-vm-helper: host sleep control is unavailable: \(detail)\n",
-            stderr
-        )
-        pendingHostSleepControlFailure = "The virtual machine started, but Try Omarchy could not enable safe Mac sleep. Please close and reopen the app. (\(detail))"
-        lifecycle.requestQuit()
-        supervisor.forward(signal: SIGTERM)
+        if !session.isRunning { disposableWorkspace.remove() }
     }
 
     private static let permissionPromptShownKey = "LauncherPermissionPromptShown"
@@ -912,7 +785,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
 
     private func moveStorageLocation(from source: String, to path: String,
         progress: @escaping (VMTransferProgress) -> Void, completion: @escaping (String?) -> Void) {
-        guard !childRunning, storageEnvironmentOverride == nil,
+        guard !session.isRunning, storageEnvironmentOverride == nil,
               let root = startupPreferenceRoot(), root.path == source,
               let executable = Bundle.main.executableURL else {
             completion("Shut down Omarchy before relocating its VM. Environment overrides must be removed first.")
@@ -966,7 +839,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     /// The copy a move left behind. It is never the selected VM, so trashing
     /// it cannot strand the next launch.
     private func discardPreviousStorageLocation(_ source: String, identity: String, completion: @escaping (String?) -> Void) {
-        guard !childRunning, workspaceTransferProcess == nil, storageEnvironmentOverride == nil,
+        guard !session.isRunning, workspaceTransferProcess == nil, storageEnvironmentOverride == nil,
               let selected = startupPreferenceRoot(), selected.path != source else {
             completion("Shut down Omarchy before deleting the previous copy.")
             return
@@ -979,7 +852,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     /// POSIX lock so unrelated UI file reads cannot release it.
     private func runWorkspaceHelper(_ arguments: [String], failure: String,
         completion: @escaping (String?) -> Void) {
-        guard !childRunning, workspaceTransferProcess == nil,
+        guard !session.isRunning, workspaceTransferProcess == nil,
               let executable = Bundle.main.executableURL else {
             completion("Shut down Omarchy before changing its VM.")
             return
@@ -1071,94 +944,10 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A physical unplug cannot be prevented, but the VM must not keep writing
-    /// into a vanished mount. A graceful eject is already refused by macOS
-    /// while QEMU holds the disk open and FD 9 holds its advisory lock.
-    private func observeVolumeUnmounts() {
-        volumeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didUnmountNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            MainActor.assumeIsolated {
-                guard let self,
-                      let volume = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL
-                else { return }
-                self.handleVolumeUnmount(at: volume)
-            }
-        }
-    }
-
-    private func observeHostPowerEvents() {
-        hostPowerObserver = HostPowerNotificationObserver(
-            onWillSleep: { [weak self] in
-                self?.prepareForHostSleep()
-            },
-            onDidWake: { [weak self] in
-                self?.beginResumeAfterHostWake()
-            }
-        )
-    }
-
-    /// `willSleepNotification` observers may delay host sleep while they run.
-    /// Keep this synchronous so QEMU acknowledges `stop` before macOS freezes
-    /// the Hypervisor.framework process.
-    private func prepareForHostSleep() {
-        do {
-            try hostSleepCoordinator.prepareForHostSleep(
-                vmIsRunning: childRunning,
-                isStopping: lifecycle.isTerminating
-            )
-        } catch {
-            fputs(
-                "omarchy-vm-helper: could not pause the VM before host sleep: \(error.localizedDescription)\n",
-                stderr
-            )
-        }
-    }
-
-    private func beginResumeAfterHostWake() {
-        cancelHostWakeRetry()
-        resumeAfterHostWake()
-        // The guest clock stood still while the Mac slept, paused or not; the
-        // time zone bridge prompts the guest to recover it now.
-        HostWake.post()
-    }
-
-    private func resumeAfterHostWake() {
-        do {
-            try hostSleepCoordinator.resumeAfterHostWake(
-                vmIsRunning: childRunning,
-                isStopping: lifecycle.isTerminating
-            )
-            cancelHostWakeRetry()
-        } catch {
-            fputs(
-                "omarchy-vm-helper: could not resume the VM after host wake: \(error.localizedDescription)\n",
-                stderr
-            )
-            guard !(error is VMHostSleepControlError),
-                  hostSleepCoordinator.pausedForHostSleep,
-                  childRunning,
-                  !lifecycle.isTerminating
-            else { return }
-            guard hostSleepCoordinator.scheduleWakeRetry({ [weak self] in
-                self?.resumeAfterHostWake()
-            }) else {
-                presentHostWakeRecovery(error: error)
-                return
-            }
-        }
-    }
-
-    private func cancelHostWakeRetry() {
-        hostSleepCoordinator.cancelWakeRetry()
-    }
-
     private func presentHostWakeRecovery(error: Error) {
-        guard childRunning,
+        guard session.isRunning,
               !lifecycle.isTerminating,
-              hostSleepCoordinator.pausedForHostSleep
+              session.pausedForHostSleep
         else { return }
 
         activationController.reconcile()
@@ -1175,26 +964,15 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         let response = alert.runModal()
         isPresentingBlockingAlert = false
         if response == .alertFirstButtonReturn {
-            beginResumeAfterHostWake()
+            session.beginResumeAfterHostWake()
         } else {
             NSApp.terminate(nil)
         }
     }
 
-    private func handleVolumeUnmount(at volume: URL) {
-        guard childRunning, !lifecycle.isTerminating, let root = activeStateRoot else { return }
-        let mountPoint = volume.standardizedFileURL.path
-        let prefix = mountPoint.hasSuffix("/") ? mountPoint : mountPoint + "/"
-        guard root == mountPoint || root.hasPrefix(prefix) else { return }
-
+    private func presentVolumeUnmountAlert() {
         activationController.reconcile()
         defer { activationController.reconcile() }
-        fputs(
-            "omarchy-vm-helper: the volume holding the Omarchy VM was unmounted; stopping\n",
-            stderr
-        )
-        lifecycle.requestQuit()
-        supervisor.forward(signal: SIGTERM)
 
         // This alert is the first UI this accessory app shows all session, so
         // it must activate itself or it can be created without ever becoming
@@ -1232,38 +1010,28 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func childDidExit(status: Int32) {
-        guard childRunning else { return }
-        childRunning = false
+    private func childDidExit(_ exit: VMRunSession.Exit) {
         settingsBridge?.stop()
         settingsBridge = nil
         settingsReturnApplication = nil
-        if virtualMachineReachedStart {
+        if exit.reachedStart {
             startMenuWindow?.dismiss()
             startMenuWindow = nil
         }
-        cancelHostWakeRetry()
-        hostSleepCoordinator.disconnect()
-        let recentStandardError = supervisor.recentStandardError
-
-        let wasStopping = lifecycle.isStopping
-        let settingsAction = lifecycle.settingsAction
-        controlSocketPath = nil
-        activeStateRoot = nil
+        let status = exit.status
+        let recentStandardError = exit.standardError
+        let settingsAction = exit.settingsAction
         let presentation = VMExitPresentationDecision.make(
             status: status,
-            reachedVirtualMachineStart: virtualMachineReachedStart,
-            wasStopping: wasStopping
+            reachedVirtualMachineStart: exit.reachedStart,
+            wasStopping: exit.wasStopping
         )
-        let hostSleepControlFailure = pendingHostSleepControlFailure
-        pendingHostSleepControlFailure = nil
-        lifecycle.childExited()
+        let hostSleepControlFailure = exit.hostSleepControlFailure
         if applicationTerminationPending {
             NSApp.reply(toApplicationShouldTerminate: true)
         } else if let hostSleepControlFailure {
             startMenuWindow?.launchDidFail(errorMessage: hostSleepControlFailure)
         } else if let settingsAction {
-            virtualMachineReachedStart = false
             // This transition deliberately bypasses automatic startup and the
             // original command-line reset request. Reset still needs a new click.
             prepareStartMenu(startAutomatically: false, honorInitialReset: false)
@@ -1333,7 +1101,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             return
         }
 
-        if !childRunning { disposableWorkspace.remove() }
+        if !session.isRunning { disposableWorkspace.remove() }
         exitStatus = status
 
         // `stop` + a posted wake-up event only reliably pumps the run loop
