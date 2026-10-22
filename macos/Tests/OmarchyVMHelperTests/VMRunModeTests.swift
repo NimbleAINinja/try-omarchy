@@ -303,8 +303,9 @@ struct VMRunClientTests {
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent(".build/debug/omarchy-vm-helper")
 
-    @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: helper.path)))
-    func theHelpersRunModeSpeaksTheProtocol() throws {
+    /// `swift test` builds the helper, so a missing one fails rather than skips.
+    @Test func theHelpersRunModeSpeaksTheProtocol() throws {
+        try #require(FileManager.default.isExecutableFile(atPath: Self.helper.path))
         let (kit, root) = try fakeKit(helper: "")
         defer { try? FileManager.default.removeItem(at: root) }
         let executable = try kit.helperURL()

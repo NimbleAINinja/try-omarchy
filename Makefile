@@ -18,7 +18,7 @@ FORCE ?= 0
 TEST_JOBS ?= 4
 
 SHELL_TESTS := network-helper qemu-networking qemu-port-forwarding run-qemu-gpu \
-  qemu-usb-passthrough qemu-monitor-ready
+  qemu-usb-passthrough qemu-monitor-ready run-mode
 SHELL_TEST_TARGETS := $(addprefix test-shell-,$(SHELL_TESTS))
 
 .DEFAULT_GOAL := help

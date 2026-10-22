@@ -44,7 +44,7 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         session.onEvent = { [weak self] event in self?.handle(event) }
         session.observeHost()
         guard !shutdownRequested else { return finish(status: 0) }
-        if let failure = VMRunClient.preflight() { return fail(failure) }
+        if let failure = Self.preflight(environment: baseEnvironment) { return fail(failure) }
         presentAsProduct()
         let settings: VMRunLaunchSettings
         switch VMRunLaunchSettings.make(
@@ -228,6 +228,15 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
     private func emit(_ event: VMRunEvent) {
         guard let line = try? event.encodedLine() else { return }
         VMRunOutput.write(line)
+    }
+
+    /// The run-mode integration test (macos/Tests/run-mode.test.sh) starts a
+    /// launcher that runs no VM, on CI runners that have no hypervisor.
+    /// VMRunClient never passes this on.
+    static let skipPreflightKey = "OMARCHY_VM_RUN_TEST_SKIP_PREFLIGHT"
+
+    static func preflight(environment: [String: String]) -> VMRunError? {
+        environment[skipPreflightKey] == "1" ? nil : VMRunClient.preflight()
     }
 
     private static func bundlesNetworkService(_ bundle: Bundle) -> Bool {
