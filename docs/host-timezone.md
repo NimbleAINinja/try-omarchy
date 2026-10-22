@@ -1,14 +1,11 @@
 # Mac time zone and guest clock
 
-Omarchy's first-boot setup form lists `timedatectl list-timezones`,
-preselects `tzupdate -p`, and applies the choice with `timedatectl
-set-timezone`. The `try-omarchy` package puts small stand-ins for both
-commands on the setup service's `PATH` only (`/usr/lib/try-omarchy/shims`):
-the list starts with **Same as macOS**, which is preselected, and the choice
-goes to `try-omarchy-timezone --select`. **Same as macOS** sets the Mac's zone
-(from the `tryomarchy.timezone` host setting) and follows it; any named zone,
-even the Mac's current one, is a fixed guest zone. The policy is recorded in
-`/var/lib/try-omarchy/timezone.json` (`auto` or `manual`) during setup.
+Omarchy's first-boot setup form lists `timedatectl list-timezones`, preselects its time zone default (`OMARCHY_FORM_TIMEZONE_DEFAULT`, else a network guess), and applies the choice with `timedatectl set-timezone`.
+The `try-omarchy` package puts a `timedatectl` stand-in on the setup service's `PATH` only (`/usr/lib/try-omarchy/shims`): the list starts with **Same as macOS**, and the choice goes to `try-omarchy-timezone --select`.
+Before the form starts, the setup service's drop-in runs `setup-form-defaults`, which sets the default to **Same as macOS** while the guest follows the Mac and the Mac's zone exists in the guest.
+It writes `/run/try-omarchy/setup-form.env`, which only that service reads, and leaves Omarchy's `/etc/omarchy/form-defaults` alone.
+**Same as macOS** sets the Mac's zone (from the `tryomarchy.timezone` host setting) and follows it; any named zone, even the Mac's current one, is a fixed guest zone.
+The policy is recorded in `/var/lib/try-omarchy/timezone.json` (`auto` or `manual`) during setup.
 Everything else reaches the real commands.
 
 While following, a dedicated root-only virtio port (`dev.tryomarchy.timezone`)
