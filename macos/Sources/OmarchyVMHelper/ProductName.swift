@@ -16,7 +16,7 @@ enum ProductName {
 
     static func validated(_ name: String) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard (1...64).contains(trimmed.count), trimmed == name,
+        guard (1...64).contains(trimmed.count), name.utf8.count <= 255, trimmed == name,
               name.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
         else { return nil }
         return name

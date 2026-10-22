@@ -74,6 +74,8 @@ struct VMRunProtocolTests {
             { $0.productName = "" },
             { $0.productName = " Padded" },
             { $0.productName = "Two\nlines" },
+            { $0.productName = String(repeating: "🇧🇷", count: 64) },
+            { $0.productName = String(repeating: "x", count: 65) },
             { $0.storageRoot = "relative/VM" },
             { $0.storageRoot = "/a\nb" },
             { $0.bridges = [.camera, .camera] },
@@ -94,6 +96,21 @@ struct VMRunProtocolTests {
             #"{"version":2,"productName":"x","bridges":[],"network":"shared"}"#,
         ] {
             #expect(throws: (any Error).self) { try VMRunConfiguration.decode(line: Data(line.utf8)) }
+        }
+    }
+
+    @Test func productNamesFitAFileName() throws {
+        for name in [String(repeating: "x", count: 64), String(repeating: "é", count: 64),
+                     String(repeating: "🇧🇷", count: 31)] {
+            #expect(ProductName.validated(name) == name)
+            let configuration = VMRunConfiguration(productName: name)
+            #expect(try VMRunConfiguration.decode(line: configuration.encodedLine()) == configuration)
+        }
+        for name in [String(repeating: "🇧🇷", count: 64), String(repeating: "🇧🇷", count: 32), String(repeating: "x", count: 65)] {
+            #expect(ProductName.validated(name) == nil)
+            #expect(throws: VMRunProtocolError.invalidConfiguration) {
+                try VMRunConfiguration(productName: name).encodedLine()
+            }
         }
     }
 
