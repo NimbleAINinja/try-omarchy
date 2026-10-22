@@ -8,7 +8,7 @@ Another app can run the Omarchy VM without Try Omarchy's launcher window. Omarch
 
 ## One session
 
-The full app and the run mode run the VM through the same session (`VMRunSession`). The session downloads the image a new VM needs, starts the launch script, waits for QMP, pauses the VM across Mac sleep, stops it when its storage volume goes away, and reports the exit. The full app keeps its start menu, settings, VM moves and deletions, and the settings bridge. The run mode keeps nothing else: it has fixed defaults and no settings.
+The full app and the run mode run the VM through the same session (`VMRunSession`). The session downloads the image a new VM needs, starts the launch script, waits for QMP, pauses the VM across Mac sleep, stops it when its storage volume goes away, and reports the exit. Both read the same stored settings and serve the settings bridge. The full app keeps its start menu, VM moves and deletions.
 
 ## The kit
 
@@ -22,13 +22,33 @@ The embedding app signs the kit's binaries as itself. macOS then asks for Access
 
 The app starts `omarchy-vm-helper --run-vm` from the kit, writes one configuration line to its standard input, and reads one event per line from its standard output. Diagnostics go to standard error. The protocol and its validation are in `macos/Sources/TryOmarchyKitClient/VMRunProtocol.swift`.
 
-The configuration names the product, the storage folder (the full app's default folder when absent), the optional bridges, and memory and CPUs (automatic when absent). Audio and guest status always run. The settings bridge is never part of the run mode, so the guest gets no settings port and Omarchy's Setup menu shows no settings row.
+The configuration names the product and the optional bridges. Its storage folder, memory, CPUs and network are fallbacks for a VM with no stored settings ([settings](#settings)). Audio, guest status and the settings bridge always run.
 
 The run mode writes `progress` (a phase and a percent), `ready`, `stopping`, `error` (a stable code and a message) and, last, `exited`. Error codes do not change between versions; messages may.
 
 The run mode shuts down when it reads the `shutdown` command, when its input closes, or on a first signal. It asks Omarchy to shut down over QMP, waits up to a minute, then stops QEMU. So an app that crashes or is force-quit still shuts Omarchy down. A second signal stops QEMU at once.
 
 The image download pauses on cellular and Low Data Mode connections and keeps the Mac awake.
+
+## Settings
+
+The run mode starts the VM with the settings the launcher window stored, and uses the configuration only for what was never stored:
+
+- **the VM folder:** the folder chosen in the launcher, then the configuration's `storageRoot`, then the default folder. A chosen folder that is missing stops the run with `storage-unavailable`; it never falls back to another VM.
+- **memory and CPUs** (and the disk's maximum size): the stored resources, then the configuration's `memoryMiB` and `cpus`, then the launcher's automatic choice.
+- **networking:** the stored mode, then the configuration's `network`. A configuration that asks for bridged networking in a kit without the networking daemon fails with `bridged-network-unavailable`, as before; a stored bridged choice starts with shared networking instead, so Try is never stuck.
+- **port forwarding, the shared folder, the USB device, Immersive Mode and the camera notch:** stored only. A port that is in use fails with `launch-failed`.
+
+Audio follows the Mac's default devices. The development overrides (`OMARCHY_QEMU_GPU_STATE_ROOT`, `OMARCHY_QEMU_GPU_PORT_FORWARDS` and the like) still win, and `VMRunClient` never passes them on.
+
+Choosing Omarchy's settings row in its Setup menu opens the launcher's window from the run mode's process, named after the product. The process shows in the Dock only while the window is open. The window has the full app's sharing, network, virtual machine and Immersive Mode settings, and the permission rows, which ask macOS in the embedding app's name. It has no launch, restart, shut down, Skip Launcher or update check: the embedding app owns those. Changes apply at the next start. Quitting from the window shuts Omarchy down, like the `shutdown` command.
+
+Settings are stored in files, not in an app's preferences, so any kit reads the same ones whichever app it runs under:
+
+- `settings.json` in the VM's folder, beside `launcher-settings.json`, holds the VM's settings. It moves and is deleted with the VM.
+- `storage-location.json` in `~/Library/Application Support/Try Omarchy` holds which folder is the VM.
+
+Both are private (0600) and versioned. A file that is not private, is too large or comes from a newer schema is ignored and never overwritten. Keys a newer kit added survive an older kit's save. The full app moves its older UserDefaults values into these files once, the first time they are missing.
 
 ## Sharing a VM
 

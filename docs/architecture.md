@@ -39,6 +39,11 @@ shares: the image download, the launch script, QMP readiness, Mac sleep and the
 exit. Another app embeds the same core as a kit and starts the run mode (see
 [the VM kit and run mode](vm-kit.md)).
 
+The launcher's settings are versioned files, not app preferences: the VM's
+settings in its storage folder, and the choice of folder under
+`~/Library/Application Support/Try Omarchy`. The full app and the run mode read
+the same files, whichever app identity runs the kit.
+
 QEMU presents the hardware that Linux expects: CPUs, memory, storage, networking,
 graphics, audio, keyboard, and pointer devices. Because both the Mac and the
 guest are ARM64, Apple Hypervisor Framework runs the guest CPU instructions on
@@ -215,13 +220,13 @@ host credential as `omarchy.shared_folder_name=<base64url>`.
 The personal share uses `cache=readahead`, which omits 9p writeback caching.
 See [shared-folder safety](shared-folder-safety.md).
 
-Optional port mappings are stored as a versioned launcher preference, validated
+Optional port mappings are stored as a versioned launcher setting, validated
 again at every Swift-to-shell boundary, and translated into QEMU user-network
 `hostfwd` rules. The host side is always bound explicitly to `127.0.0.1`; the
 launcher never creates wildcard or LAN-facing listeners. TCP and UDP occupy
 separate host-port namespaces, matching QEMU's socket behavior.
 
-**Add SSH** inserts an ordinary `tcp:2222:22` mapping into that same preference;
+**Add SSH** inserts an ordinary `tcp:2222:22` mapping into that same setting;
 there is no second SSH forwarding store or QEMU argument path. After the shell
 parser accepts the complete mapping list, any TCP rule targeting guest port 22
 also adds the fixed `tryomarchy.ssh_access=1` host setting. UDP port 22 and

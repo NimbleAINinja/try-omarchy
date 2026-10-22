@@ -21,15 +21,18 @@ public enum VMRunNetwork: String, Codable, Sendable {
     case bridged
 }
 
-/// What the run mode needs to start the VM. Everything not here is a fixed
-/// default; the full app's settings are not part of the run mode.
+/// What the run mode needs to start the VM. The settings stored for the VM
+/// win: the storage folder, memory, CPUs and network here apply only where
+/// the launcher stored nothing (docs/vm-kit.md).
 public struct VMRunConfiguration: Equatable, Sendable {
     /// Names the app in messages and the Touch ID prompt.
     public var productName: String
-    /// The VM's storage folder. Nil is the full app's default folder.
+    /// The VM's storage folder when none was chosen in the settings. Nil is
+    /// the full app's default folder.
     public var storageRoot: String?
     public var bridges: [VMRunBridge]
-    /// Nil leaves the size to the launcher's automatic choice.
+    /// Used when no resources are stored. Nil leaves the size to the
+    /// launcher's automatic choice.
     public var memoryMiB: Int?
     public var cpus: Int?
     public var network: VMRunNetwork

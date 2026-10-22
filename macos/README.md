@@ -145,9 +145,20 @@ errors never fall back to deletion. In the default folder the next launch
 creates a fresh VM; a custom folder must be replaced by another VM or an empty
 folder.
 
-The choice is stored in `UserDefaults` and published to the launcher as
-`OMARCHY_QEMU_GPU_STATE_ROOT`. An inherited value still wins and disables
-location changes in the launcher.
+The choice is stored in the versioned `storage-location.json` file in
+`~/Library/Application Support/Try Omarchy`, outside any VM, and published to
+the launcher as `OMARCHY_QEMU_GPU_STATE_ROOT`. An inherited value still wins
+and disables location changes in the launcher.
+
+The VM's other settings (resources, networking, port forwarding, the shared
+folder, the USB device, Immersive Mode and the camera notch) are stored in the
+versioned `settings.json` file at the workspace's root
+(`LauncherSettingsFile.swift`), so they move and are deleted with the VM, and
+the run mode reads them under any app's identity
+([VM kit](../docs/vm-kit.md#settings)). Both files are private and ignored when
+they are not. Until the launcher has marked a new workspace, and for audio
+devices, settings stay in `UserDefaults`; the app moves its older
+`UserDefaults` values into the files once, when the files are missing.
 
 **Skip launcher** is stored in the versioned `launcher-settings.json` file at
 that workspace's root (normally `~/Library/Application Support/Try Omarchy/VM/v1`).
@@ -175,7 +186,7 @@ A disposable session clones the same file into its own temporary folder
 are not APFS, not owned by the user, or too broad, before it touches them.
 
 The Resources editor stores CPU count, RAM, and an optional maximum disk capacity in the versioned
-`vmResourcePreferences` UserDefaults value. Until the first save, it adopts the
+`vmResourcePreferences` setting. Until the first save, it adopts the
 existing `memoryPreferences` choice without rewriting it. CPU choices range
 from 4 through all host cores. Memory recommends 8 GiB on hosts with at least
 16 GiB. Choices start at 4/6/8 GiB and continue in 4 GiB steps, keeping at least
