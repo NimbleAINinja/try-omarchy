@@ -50,6 +50,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     private let baseEnvironment: [String: String]
     private let session: VMRunSession
     private let preferenceStore: AudioRoutingPreferenceStore
+    private let vmSettings: LauncherSettingsFile
     private let sharedFolderStore: SharedFolderPreferenceStore
     private let usbDeviceStore: USBDevicePreferenceStore
     private let portForwardingStore: PortForwardingPreferenceStore
@@ -89,15 +90,9 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         supervisor: QEMUGPUProcessSupervisor = QEMUGPUProcessSupervisor(),
         preferenceStore: AudioRoutingPreferenceStore = AudioRoutingPreferenceStore(),
-        sharedFolderStore: SharedFolderPreferenceStore = SharedFolderPreferenceStore(),
-        usbDeviceStore: USBDevicePreferenceStore = USBDevicePreferenceStore(),
-        portForwardingStore: PortForwardingPreferenceStore = PortForwardingPreferenceStore(),
-        networkStore: VMNetworkPreferenceStore = VMNetworkPreferenceStore(),
-        fullscreenPreferenceStore: FullscreenPreferenceStore = FullscreenPreferenceStore(),
+        legacyPreferences: UserDefaults = .standard,
         startupPreferenceStore: StartupPreferenceStore = StartupPreferenceStore(),
-        resourcePreferenceStore: VMResourcePreferenceStore = VMResourcePreferenceStore(),
         resourceLimits: VMResourceLimits = .current,
-        storageLocationStore: StorageLocationPreferenceStore = StorageLocationPreferenceStore(),
         volumeProbe: VolumeProbing = URLVolumeProbe(),
         volumeRootDetector: VolumeRootDetecting = FileManagerVolumeRootDetector(),
         deviceProvider: HostAudioDeviceProviding = CoreAudioHostAudioDeviceProvider(),
@@ -116,13 +111,20 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             bundledMetrics: bundledMetrics
         )
         self.preferenceStore = preferenceStore
-        self.sharedFolderStore = sharedFolderStore
-        self.usbDeviceStore = usbDeviceStore
-        self.portForwardingStore = portForwardingStore
-        self.networkStore = networkStore
-        self.fullscreenPreferenceStore = fullscreenPreferenceStore
+        let storageLocationStore = StorageLocationPreferenceStore(
+            storage: LauncherSettingsFile.storageLocation(legacy: legacyPreferences)
+        )
+        let vmSettings = LauncherSettingsFile.vmSettings(legacy: legacyPreferences) {
+            QEMUGPUStorageSpaceEstimate.storageRootURL(environment: baseEnvironment, preference: storageLocationStore.load())
+        }
+        self.vmSettings = vmSettings
+        self.sharedFolderStore = SharedFolderPreferenceStore(storage: vmSettings)
+        self.usbDeviceStore = USBDevicePreferenceStore(storage: vmSettings)
+        self.portForwardingStore = PortForwardingPreferenceStore(storage: vmSettings)
+        self.networkStore = VMNetworkPreferenceStore(storage: vmSettings)
+        self.fullscreenPreferenceStore = FullscreenPreferenceStore(storage: vmSettings)
         self.startupPreferenceStore = startupPreferenceStore
-        self.resourcePreferenceStore = resourcePreferenceStore
+        self.resourcePreferenceStore = VMResourcePreferenceStore(storage: vmSettings)
         self.resourceLimits = resourceLimits
         self.storageLocationStore = storageLocationStore
         self.volumeProbe = volumeProbe
@@ -622,6 +624,7 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     }
 
     private func virtualMachineDidStart(qmpSocketPath: String) {
+        vmSettings.adoptLegacySettings()
         if let root = startupPreferenceRoot() {
             do { try startupPreferenceStore.persistPendingChoice(storageRoot: root) }
             catch { fputs("[startup] Could not retain Skip launcher: \(error.localizedDescription)\n", stderr) }

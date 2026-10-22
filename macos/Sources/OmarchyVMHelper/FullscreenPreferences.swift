@@ -14,14 +14,18 @@ struct FullscreenPreferenceStore {
     static let key = "fullscreenPreferences"
     static let schemaVersion = 1
 
-    private let defaults: UserDefaults
+    private let storage: any LauncherSettingsStorage
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    init(storage: any LauncherSettingsStorage) {
+        self.storage = storage
+    }
+
+    init(defaults: UserDefaults) {
+        self.init(storage: defaults)
     }
 
     func load() -> FullscreenPreferences {
-        guard let data = defaults.data(forKey: Self.key),
+        guard let data = storage.settingData(forKey: Self.key),
               let payload = try? JSONDecoder().decode(Payload.self, from: data),
               payload.schemaVersion == Self.schemaVersion else {
             return .defaults
@@ -39,7 +43,7 @@ struct FullscreenPreferenceStore {
             usesNotch: preferences.usesNotch
         )
         guard let data = try? JSONEncoder().encode(payload) else { return }
-        defaults.set(data, forKey: Self.key)
+        storage.setSettingData(data, forKey: Self.key)
     }
 
     /// `usesNotch` is optional so settings saved before it existed keep their

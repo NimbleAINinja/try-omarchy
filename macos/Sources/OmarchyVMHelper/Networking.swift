@@ -15,12 +15,14 @@ struct VMNetworkPreferences: Codable, Equatable {
 
 struct VMNetworkPreferenceStore {
     static let key = "networkPreferences"
-    let defaults: UserDefaults
+    let storage: any LauncherSettingsStorage
 
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    init(storage: any LauncherSettingsStorage) { self.storage = storage }
+
+    init(defaults: UserDefaults) { self.init(storage: defaults) }
 
     func load() -> VMNetworkPreferences {
-        guard let data = defaults.data(forKey: Self.key),
+        guard let data = storage.settingData(forKey: Self.key),
               let payload = try? JSONDecoder().decode(Payload.self, from: data),
               payload.version == 1 else { return VMNetworkPreferences() }
         return payload.preferences
@@ -30,7 +32,7 @@ struct VMNetworkPreferenceStore {
         if preferences.mode == .bridged && !VMNetworkPolicy.validInterface(preferences.interface) {
             throw HelperError.io("Choose an available interface for bridged networking.")
         }
-        defaults.set(try JSONEncoder().encode(Payload(version: 1, preferences: preferences)), forKey: Self.key)
+        storage.setSettingData(try JSONEncoder().encode(Payload(version: 1, preferences: preferences)), forKey: Self.key)
     }
 
     private struct Payload: Codable {
