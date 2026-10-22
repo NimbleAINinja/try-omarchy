@@ -548,15 +548,6 @@ reap_stale_work_dirs
 
 work_dir=$(mktemp -d '/private/tmp/omarchy-qemu-gpu.XXXXXX') || fail "could not create a private temporary directory"
 printf 'run-qemu-gpu:v2:%s\n' "$$" >"$work_dir/.run-qemu-gpu.owner"
-qemu_exec=$qemu_bin
-case $product_name in
-  "${qemu_bin##*/}" | */* | . | ..) ;;
-  *)
-    mkdir "$work_dir/product"
-    ln -s "$qemu_bin" "$work_dir/product/$product_name"
-    qemu_exec="$work_dir/product/$product_name"
-    ;;
-esac
 # Every exit from here on stops QEMU and the bridges and removes the work directory.
 qemu_pid=""
 decompress_pid=''
@@ -593,6 +584,18 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# A name that cannot be a file name starts QEMU under the binary's own name.
+qemu_exec=$qemu_bin
+case $product_name in
+  "${qemu_bin##*/}" | */* | . | ..) ;;
+  *)
+    if (($(printf '%s' "$product_name" | wc -c) <= 255)) && mkdir "$work_dir/product" 2>/dev/null &&
+      ln -s "$qemu_bin" "$work_dir/product/$product_name" 2>/dev/null; then
+      qemu_exec="$work_dir/product/$product_name"
+    fi
+    ;;
+esac
 
 socket_dir="/tmp/${work_dir##*/}"
 

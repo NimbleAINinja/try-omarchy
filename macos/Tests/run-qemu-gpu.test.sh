@@ -124,7 +124,7 @@ launch_env=()
 launch() { # args...
   env PATH="$shims:$PATH" OMARCHY_QEMU_GPU_STATE_ROOT="$state" OMARCHY_QEMU_GPU_DRY_RUN=1 \
     OMARCHY_QEMU_GPU_CPUS=4 OMARCHY_QEMU_GPU_MEMORY_MIB=2048 ${launch_env[@]+"${launch_env[@]}"} \
-    "$resources/scripts/run-qemu-gpu.sh" "$@" 2>&1 | sed 's/\\//g'
+    "$resources/scripts/run-qemu-gpu.sh" "$@" 2>&1 | LC_ALL=C sed 's/\\//g'
   return "${PIPESTATUS[0]}"
 }
 qemu_ran() {
@@ -245,6 +245,11 @@ assert_contains "$output" "/product/Omarchy, Installer -name guest=Omarchy,, Ins
 assert_contains "$output" "Product icon: $test_root/Installer.icns"
 output=$(OMARCHY_PRODUCT_NAME='Omarchy/Installer' launch)
 assert_contains "$output" "$resources/runtime/bin/Try Omarchy -name guest=Omarchy/Installer "
+# 64 flags are 512 bytes, over the 255-byte limit for a file name.
+flags=$(printf '\xf0\x9f\x87\xa7\xf0\x9f\x87\xb7%.0s' {1..64})
+output=$(OMARCHY_PRODUCT_NAME=$flags launch)
+assert_contains "$output" "$resources/runtime/bin/Try Omarchy -name "
+assert_not_contains "$output" "/product/"
 for icon in Installer.icns "$test_root/missing.icns" "$test_root"; do
   output=$(OMARCHY_PRODUCT_ICON=$icon launch) && fail "the product icon $icon was accepted"
   assert_contains "$output" "OMARCHY_PRODUCT_ICON must be the absolute path of an icon file"

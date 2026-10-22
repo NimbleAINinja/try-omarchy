@@ -12,50 +12,54 @@ the signed app icon of the bundle that holds the real executable.
 diff --git a/ui/cocoa.m b/ui/cocoa.m
 --- a/ui/cocoa.m
 +++ b/ui/cocoa.m
-@@ -1215,7 +1215,7 @@
-     COCOA_DEBUG("QemuCocoaView: grabMouse\n");
- 
-     if (qemu_name)
--        [[self window] setTitle:[NSString stringWithFormat:@"QEMU %s - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)", qemu_name]];
-+        [[self window] setTitle:[NSString stringWithFormat:@"%s - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)", qemu_name]];
-     else
-         [[self window] setTitle:@"QEMU - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)"];
-     [self hideCursor];
-@@ -1228,7 +1228,7 @@
-     COCOA_DEBUG("QemuCocoaView: ungrabMouse\n");
- 
-     if (qemu_name)
--        [[self window] setTitle:[NSString stringWithFormat:@"QEMU %s", qemu_name]];
-+        [[self window] setTitle:[NSString stringWithUTF8String:qemu_name]];
-     else
-         [[self window] setTitle:@"QEMU"];
-     [self unhideCursor];
-@@ -1279,6 +1279,13 @@
-     });
- }
- @end
+@@ -286,6 +286,13 @@
+         bql_unlock();
+     }
+     return val;
++}
 +
 +static NSString *cocoa_product_name(void)
 +{
 +    NSString *name = qemu_name ? [NSString stringWithUTF8String:qemu_name] : nil;
 +
 +    return [name length] ? name : @"Try Omarchy";
-+}
+ }
  
+ static int cocoa_keycode_to_linux(int keycode)
+@@ -1214,10 +1221,7 @@
+ {
+     COCOA_DEBUG("QemuCocoaView: grabMouse\n");
  
+-    if (qemu_name)
+-        [[self window] setTitle:[NSString stringWithFormat:@"QEMU %s - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)", qemu_name]];
+-    else
+-        [[self window] setTitle:@"QEMU - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)"];
++    [[self window] setTitle:[NSString stringWithFormat:@"%@ - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)", cocoa_product_name()]];
+     [self hideCursor];
+     CGAssociateMouseAndMouseCursorPosition(isAbsoluteEnabled);
+     isMouseGrabbed = TRUE; // while isMouseGrabbed = TRUE, QemuCocoaApp sends all events to [cocoaView handleEvent:]
+@@ -1227,10 +1231,7 @@
+ {
+     COCOA_DEBUG("QemuCocoaView: ungrabMouse\n");
  
-@@ -1345,7 +1352,9 @@
+-    if (qemu_name)
+-        [[self window] setTitle:[NSString stringWithFormat:@"QEMU %s", qemu_name]];
+-    else
+-        [[self window] setTitle:@"QEMU"];
++    [[self window] setTitle:cocoa_product_name()];
+     [self unhideCursor];
+     CGAssociateMouseAndMouseCursorPosition(TRUE);
+     isMouseGrabbed = FALSE;
+@@ -1345,7 +1346,7 @@
          }
          [window setAcceptsMouseMovedEvents:YES];
          [window setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
 -        [window setTitle:qemu_name ? [NSString stringWithFormat:@"QEMU %s", qemu_name] : @"QEMU"];
-+        [window setTitle:qemu_name
-+            ? [NSString stringWithUTF8String:qemu_name]
-+            : @"QEMU"];
++        [window setTitle:cocoa_product_name()];
          [window setContentView:cocoaView];
          [window makeKeyAndOrderFront:self];
          [window center];
-@@ -1667,7 +1676,7 @@
+@@ -1667,7 +1668,7 @@
  {
      NSAlert *alert = [NSAlert new];
      [alert autorelease];
@@ -64,7 +68,7 @@ diff --git a/ui/cocoa.m b/ui/cocoa.m
      [alert addButtonWithTitle: @"Cancel"];
      [alert addButtonWithTitle: @"Quit"];
      if([alert runModal] == NSAlertSecondButtonReturn) {
-@@ -1681,20 +1690,16 @@
+@@ -1681,20 +1682,16 @@
  - (IBAction) do_about_menu_item: (id) sender
  {
      NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -87,7 +91,7 @@ diff --git a/ui/cocoa.m b/ui/cocoa.m
      } else {
          options = @{
              NSAboutPanelOptionApplicationVersion : version,
-@@ -1761,17 +1766,17 @@
+@@ -1761,17 +1758,17 @@
  
      // Application menu
      menu = [[NSMenu alloc] initWithTitle:@""];
@@ -108,7 +112,7 @@ diff --git a/ui/cocoa.m b/ui/cocoa.m
      menuItem = [[NSMenuItem alloc] initWithTitle:@"Apple" action:nil keyEquivalent:@""];
      [menuItem setSubmenu:menu];
      [[NSApp mainMenu] addItem:menuItem];
-@@ -2433,6 +2438,38 @@
+@@ -2433,6 +2430,38 @@
      }
  }
  
@@ -147,7 +151,7 @@ diff --git a/ui/cocoa.m b/ui/cocoa.m
  static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
  {
      NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
-@@ -2445,7 +2482,9 @@
+@@ -2445,7 +2474,9 @@
      ProcessSerialNumber psn = { 0, kCurrentProcess };
      TransformProcessType(&psn, kProcessTransformToForegroundApplication);
  

@@ -113,7 +113,7 @@ public struct VMRunConfiguration: Equatable, Sendable {
     }
 
     public func validate() throws {
-        guard (1...64).contains(productName.count),
+        guard (1...64).contains(productName.count), productName.utf8.count <= 255,
               productName == productName.trimmingCharacters(in: .whitespaces),
               productName.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
               Set(bridges).count == bridges.count
