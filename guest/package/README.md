@@ -113,12 +113,11 @@ know about. Either side can therefore be updated first.
 
 ## Time zone
 
-`try-omarchy-timezone.service` follows the Mac's time zone. Omarchy's setup
-form lists `timedatectl list-timezones` and preselects `tzupdate -p`; the
-package's stand-ins for both in `/usr/lib/try-omarchy/shims`, on the setup
-service's `PATH` only, put **Same as macOS** first and preselect it, and send
-the choice to `try-omarchy-timezone --select`. **Same as macOS** follows the
-Mac; a named zone, there or later, is a fixed choice.
+`try-omarchy-timezone.service` follows the Mac's time zone.
+Omarchy's setup form lists `timedatectl list-timezones` and preselects `OMARCHY_FORM_TIMEZONE_DEFAULT`.
+The package's `timedatectl` stand-in in `/usr/lib/try-omarchy/shims`, on the setup service's `PATH` only, puts **Same as macOS** first and sends the choice to `try-omarchy-timezone --select`.
+The setup service's drop-in runs `/usr/lib/try-omarchy/setup-form-defaults` first, which sets that default to **Same as macOS** through `/run/try-omarchy/setup-form.env`.
+**Same as macOS** follows the Mac; a named zone, there or later, is a fixed choice.
 
 The package's menu extension changes the action of Omarchy's **Timezone**
 row (`update.timezone`). It opens `try-omarchy-timezone-menu`:

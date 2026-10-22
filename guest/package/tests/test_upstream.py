@@ -158,11 +158,17 @@ class UpstreamContracts(unittest.TestCase):
         self.assertIn("require_all.files(toggles_dir", toggles)
         self.assertIn("omarchy/toggles/hypr", (FILES / "usr/lib/try-omarchy/user-setup").read_text())
 
-    def test_setup_form_guesses_the_zone_with_tzupdate(self):
-        # The shim on the setup service's PATH answers with the Mac's zone.
+    def test_setup_form_preselects_the_time_zone_default(self):
+        # setup-form-defaults sets the default in the environment, which the
+        # form-defaults file doesn't override, to Same as macOS, a row the
+        # timedatectl stand-in lists.
         form = (OMARCHY / "install/provisioning/setup-form.sh").read_text()
-        self.assertRegex(form, r"\btzupdate -p\b")
-        self.assertTrue((FILES / "usr/lib/try-omarchy/shims/tzupdate").is_file())
+        self.assertIn(': "${OMARCHY_FORM_TIMEZONE_DEFAULT:=', form)
+        prompt = form[form.index("omarchy_prompt_timezone() {"):]
+        prompt = prompt[:prompt.index("\n}\n")]
+        self.assertIn("guess=${OMARCHY_FORM_TIMEZONE_DEFAULT:-}", prompt)
+        self.assertRegex(prompt, r'timedatectl list-timezones \| gum choose\b[^\n]*--selected "\$guess"')
+        self.assertIn("OMARCHY_FORM_TIMEZONE_DEFAULT=", (FILES / "usr/lib/try-omarchy/setup-form-defaults").read_text())
 
     def test_provisioning_service_and_its_autologin_cleanup_keep_their_names(self):
         provision = (ROOT / "usr/bin/omarchy-provision-owner").read_text()

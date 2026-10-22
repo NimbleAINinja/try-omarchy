@@ -77,7 +77,7 @@ def synchronize(zone, state_path=STATE, localtime=LOCALTIME, zoneinfo=ZONEINFO, 
     current = fingerprint(localtime)
     if state is None and preserve_existing and not force:
         # First start after Omarchy's setup (this unit orders after it). The
-        # setup form offers the Mac zone first (the tzupdate shim): keeping it
+        # setup form preselects Same as macOS (setup-form-defaults): keeping it
         # means following the Mac; choosing another zone is a manual choice.
         if resolves_to(localtime, target):
             save_state({"mode": "auto", "zone": zone, "fingerprint": current}, state_path)

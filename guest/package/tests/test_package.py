@@ -909,7 +909,7 @@ class TimeZone(unittest.TestCase):
         return json.loads(self.state.read_text())["mode"]
 
     def test_keeping_the_mac_zone_in_setup_follows_the_mac(self):
-        self.link("Asia/Tokyo")  # the setup form's default, from the tzupdate shim
+        self.link("Asia/Tokyo")  # Same as macOS, the setup form's default
         self.assertFalse(self.sync("Asia/Tokyo"))
         self.assertEqual(self.mode(), "auto")
         self.assertTrue(self.sync("Europe/Lisbon"))  # the Mac moved
@@ -1177,30 +1177,35 @@ class TimedatectlShim(unittest.TestCase):
         self.assertNotIn('["timedatectl"', tool)
 
 
-class TzupdateShim(unittest.TestCase):
-    def run_shim(self, state=None, cmdline="tryomarchy.timezone=Asia/Tokyo"):
+class SetupFormDefaults(unittest.TestCase):
+    def defaults(self, mode="follow", mac=True, stale=False):
         tmp = Path(tempfile.mkdtemp())
-        (tmp / "cmdline").write_text(cmdline + "\n")
-        if state is not None:
-            (tmp / "state").write_text(json.dumps(state))
-        real = tmp / "tzupdate"
-        real.write_text("#!/bin/sh\necho real \"$@\"\n")
-        real.chmod(0o755)
-        return subprocess.run([str(LIB / "shims/tzupdate"), "-p"], capture_output=True, text=True, check=True,
-                              env={**os.environ, "TRY_OMARCHY_TIMEZONE_STATE": str(tmp / "state"),
-                                   "TRY_OMARCHY_HOST_CMDLINE": str(tmp / "cmdline"),
-                                   "TRY_OMARCHY_TZUPDATE": str(real)}).stdout.strip()
+        environment = tmp / "run/setup-form.env"
+        if stale:
+            environment.parent.mkdir()
+            environment.write_text('OMARCHY_FORM_TIMEZONE_DEFAULT="Same as macOS"\n')
+        tool = tmp / "try-omarchy-timezone"
+        tool.write_text("#!/bin/sh\n"
+                        f'[ "$1" = --mirror-label ] && {{ {"echo \"Same as macOS\"" if mac else "exit 1"}; exit $?; }}\n'
+                        f'[ "$1" = --mode ] && echo {mode}\n')
+        tool.chmod(0o755)
+        subprocess.run([str(LIB / "setup-form-defaults")], check=True,
+                       env={**os.environ, "TRY_OMARCHY_SETUP_FORM_ENV": str(environment),
+                            "TRY_OMARCHY_TIMEZONE_COMMAND": str(tool)})
+        return environment.read_text() if environment.exists() else None
 
     def test_preselects_same_as_macos_until_the_guest_chooses(self):
-        self.assertEqual(self.run_shim(), "Same as macOS")
-        self.assertEqual(self.run_shim({"mode": "auto", "zone": "Europe/Lisbon", "fingerprint": []}), "Same as macOS")
-        self.assertEqual(self.run_shim({"mode": "manual"}), "real -p")
-        self.assertEqual(self.run_shim(cmdline="omarchy.qemu_virgl=1"), "real -p")
+        self.assertEqual(self.defaults(), 'OMARCHY_FORM_TIMEZONE_DEFAULT="Same as macOS"\n')
+        self.assertIsNone(self.defaults(mode="fixed", stale=True))
+        self.assertIsNone(self.defaults(mac=False, stale=True))
 
     def test_only_owner_setup_sees_it(self):
         drop_in = (FILES / "usr/lib/systemd/system/omarchy-provision-owner.service.d"
                    / "10-try-omarchy-native.conf").read_text()
         self.assertIn("Environment=PATH=/usr/lib/try-omarchy/shims:", drop_in)
+        self.assertIn("ExecStartPre=-/usr/lib/try-omarchy/setup-form-defaults\n", drop_in)
+        self.assertIn("EnvironmentFile=-/run/try-omarchy/setup-form.env\n", drop_in)
+        self.assertIn("/run/try-omarchy/setup-form.env", (LIB / "setup-form-defaults").read_text())
 
 
 class Hyprland(unittest.TestCase):
