@@ -61,7 +61,7 @@ write_qemu() { # extra-markers...
 if [[ "\$*" == "-device help" ]]; then
   for device in hda-micro intel-hda virtconsole virtserialport virtio-balloon-pci virtio-9p-pci \\
     virtio-blk-pci virtio-gpu-gl-pci virtio-keyboard-pci virtio-net-pci virtio-rng-pci \\
-    virtio-serial-pci virtio-tablet-pci virtio-pinch-pci qemu-xhci usb-host; do
+    virtio-serial-pci virtio-tablet-pci virtio-pinch-pci qemu-xhci usb-kbd usb-host; do
     printf 'name "%s", bus PCI\n' "\$device"
   done
   exit 0
@@ -195,7 +195,9 @@ assert_contains "$output" "-monitor none"
 for forbidden in -no-reboot -no-shutdown ' -gdb ' ' -s '; do
   assert_not_contains "$output" "$forbidden"
 done
-assert_not_contains "$output" "qemu-xhci"
+assert_contains "$output" "-device qemu-xhci,id=omarchy-usb,streams=off"
+assert_contains "$output" "-device usb-kbd,bus=omarchy-usb.0,id=omarchy-boot-keyboard"
+assert_not_contains "$output" "usb-host"
 # Unset keeps the app's defaults: brightness, Mission Control, Spotlight,
 # Dictation, Do Not Disturb.
 assert_contains "$output" "swap-opt-cmd=off,host-keys=131:144:145:160:176:177:178 "
