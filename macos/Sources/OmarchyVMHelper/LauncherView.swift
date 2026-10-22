@@ -759,7 +759,9 @@ private struct ResetSection: View {
                     .accessibilityIdentifier("reset-settings-button")
             }
         } footer: {
-            SectionNote("To start over with a fresh Omarchy, delete the VM in Manage VMs.")
+            if !state.runsInAnotherApp {
+                SectionNote("To start over with a fresh Omarchy, delete the VM in Manage VMs.")
+            }
         }
     }
 }
