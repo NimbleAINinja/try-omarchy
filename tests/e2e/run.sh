@@ -4,10 +4,13 @@
 # (QEMU on HVF, VirGL on the Mac's GPU, the Cocoa window, the Mac bridges),
 # from first boot to a second cold boot. What the hosted CI cannot run.
 #
-#   tests/e2e/run.sh [--app APP] [--factory DIR] [--package FILE] [--out DIR] [--keep] [--no-installs] [--prepare-only] [APP_COMMAND...]
+#   tests/e2e/run.sh [--app APP] [--launcher] [--factory DIR] [--package FILE] [--out DIR] [--keep] [--no-installs] [--prepare-only] [APP_COMMAND...]
 #
 # --app APP     the built app (default dist/app.noindex/Try Omarchy.app)
-# --factory DIR boot this factory (guest/build.sh's output) instead of the app's
+# --launcher    boot through the app's launch script instead of the helper's
+#               run mode (the VM session the app and the installer trial use)
+# --factory DIR boot this factory (guest/build.sh's output) instead of the app's;
+#               implies --launcher
 # --package FILE offer this try-omarchy package instead of the app's bundled one
 #               (as the app offers it, through the guest's update service)
 # --out DIR     results, screenshots and logs (default .build/e2e/<time>)
@@ -25,7 +28,9 @@
 # The checks: guest/tests/desktop's system and session checks, plus Omarchy's
 # keybindings pressed on the VM's keyboard (qmp-keys.py), the Mac integrations
 # (vm-checks.sh), the clock after a paused VM continues (qmp-pause.py), the
-# shutdown and a second boot that keeps the user's files.
+# shutdown and a second boot that keeps the user's files. In run mode, the
+# second boot ends the way an app quitting does: its input closes, Omarchy
+# shuts down and the run mode reports a clean exit.
 # Exits 1 when a check fails.
 
 set -euo pipefail
@@ -43,16 +48,18 @@ installs=1
 prepare_only=0
 package=""
 factory=""
+run_mode=1
 while (($#)); do
   case $1 in
     --app) app=${2:?}; shift 2 ;;
-    --factory) factory=$(cd "${2:?}" && pwd -P); shift 2 ;;
+    --launcher) run_mode=0; shift ;;
+    --factory) factory=$(cd "${2:?}" && pwd -P); run_mode=0; shift 2 ;;
     --package) package=$(cd "$(dirname "${2:?}")" && pwd -P)/$(basename "$2"); shift 2 ;;
     --out) out=${2:?}; shift 2 ;;
     --keep) keep=1; shift ;;
     --no-installs) installs=0; shift ;;
     --prepare-only) prepare_only=1; keep=1; shift ;;
-    -h | --help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,34p' "$0"; exit 0 ;;
     --*) fail "unknown option: $1" ;;
     *) break ;;
   esac
@@ -62,6 +69,8 @@ done
 app=$(cd "$app" && pwd -P)
 launcher="$app/Contents/Resources/scripts/run-qemu-gpu.sh"
 [[ -x $launcher ]] || fail "the app has no launcher"
+helper="$app/Contents/MacOS/omarchy-vm-helper"
+[[ -x $helper ]] || fail "the app has no helper"
 command -v docker >/dev/null && docker info >/dev/null 2>&1 || fail "Docker must be running (the disk is prepared in the guest builder image)"
 docker image inspect try-omarchy-guest-builder >/dev/null 2>&1 ||
   docker build --quiet --platform linux/arm64 -f "$repo/guest/factory/Containerfile" -t try-omarchy-guest-builder "$repo" >/dev/null
@@ -90,6 +99,7 @@ launcher_pid=""
 cleanup() {
   local status=$?
   set +e
+  exec 7>&- 2>/dev/null
   if [[ -n $launcher_pid ]] && kill -0 "$launcher_pid" 2>/dev/null; then
     guest systemctl poweroff >/dev/null 2>&1
     for _ in $(seq 1 60); do kill -0 "$launcher_pid" 2>/dev/null || break; sleep 1; done
@@ -133,9 +143,21 @@ for setting in OMARCHY_QEMU_GPU_MEMORY_MIB OMARCHY_QEMU_GPU_CPUS; do
 done
 launcher_args=()
 [[ -z $factory ]] || launcher_args=("$factory")
+run_config=$(/usr/bin/python3 -c 'import json, sys; print(json.dumps({"version": 1, "productName": "Try Omarchy", "storageRoot": sys.argv[1], "bridges": ["clipboard", "authentication", "camera", "battery", "timezone"], "network": "shared"}))' "$state")
 launch() { # log
-  env "${launch_env[@]}" "$launcher" ${launcher_args[@]+"${launcher_args[@]}"} >"$1" 2>&1 &
-  launcher_pid=$!
+  if ((run_mode)); then
+    # The run mode reads its configuration, then commands, until its input
+    # closes; fd 7 keeps it open for as long as this run wants the VM.
+    rm -f "$work/run-vm.in"
+    mkfifo "$work/run-vm.in"
+    env "${launch_env[@]}" "$helper" --run-vm <"$work/run-vm.in" >"$1.events" 2>"$1" &
+    launcher_pid=$!
+    exec 7>"$work/run-vm.in"
+    printf '%s\n' "$run_config" >&7
+  else
+    env "${launch_env[@]}" "$launcher" ${launcher_args[@]+"${launcher_args[@]}"} >"$1" 2>&1 &
+    launcher_pid=$!
+  fi
 }
 wait_for_ssh() { # seconds
   local deadline=$((SECONDS + $1))
@@ -170,6 +192,12 @@ launch "$out/launch-1.log"
 wait_for_ssh 600 || { tail -30 "$out/launch-1.log"; fail "no SSH within 10 minutes of the first boot"; }
 guest systemctl is-system-running --wait >/dev/null 2>&1 || true
 pass "first boot and setup finished in $((SECONDS - boot_start)) s ($(guest systemctl is-system-running 2>/dev/null))"
+if ((run_mode)); then
+  grep -q '"event":"ready"' "$out/launch-1.log.events" && pass "the run mode reports the VM ready" ||
+    miss "the run mode did not report the VM ready"
+  guest test -e /dev/virtio-ports/dev.tryomarchy.settings && miss "the run mode offers the settings port" ||
+    pass "the run mode leaves the settings port out"
+fi
 guest 'cat >/etc/sudoers.d/zz-e2e && chmod 440 /etc/sudoers.d/zz-e2e' <<<"$user ALL=(ALL) NOPASSWD: ALL"
 
 log "System checks"
@@ -267,6 +295,21 @@ hypr() { guest "ls /run/user/$uid/hypr/*/.socket.sock" >/dev/null 2>&1; }
 for _ in $(seq 1 90); do hypr && break; sleep 1; done
 hypr && pass "the desktop starts again on the second boot ($((SECONDS - boot_start)) s)" || miss "no desktop on the second boot"
 guest journalctl -b --no-pager >"$out/journal-2.txt" 2>&1 || true
+
+if ((run_mode)); then
+  log "Shutdown when the app quits"
+  exec 7>&-
+  for _ in $(seq 1 90); do kill -0 "$launcher_pid" 2>/dev/null || break; sleep 1; done
+  if kill -0 "$launcher_pid" 2>/dev/null; then
+    miss "the run mode did not stop within 90 s of its input closing"
+  else
+    wait "$launcher_pid" 2>/dev/null || true
+    launcher_pid=""
+    tail -2 "$out/launch-2.log.events" | tr -d '\n' | grep -q '"event":"stopping".*"event":"exited","status":0' &&
+      pass "closing the run mode's input shuts Omarchy down cleanly" ||
+      miss "the run mode did not shut down cleanly: $(tail -2 "$out/launch-2.log.events" | tr -d '\n')"
+  fi
+fi
 
 # --- results ----------------------------------------------------------------------------------
 failures=$(grep -c '^FAIL' "$results" || true)
