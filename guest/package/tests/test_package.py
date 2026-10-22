@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contract tests for the try-omarchy guest package (guest/package)."""
 
+import base64
 import configparser
 import importlib.machinery
 import importlib.util
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -339,8 +341,9 @@ class MenuEntries(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         self.omarchy = self.home / "omarchy-menu.jsonc"
         self.omarchy.write_text(self.OMARCHY)
+        self.cmdline = self.home / "cmdline"
         self.env = {"HOME": str(self.home), "XDG_CONFIG_HOME": "", "XDG_STATE_HOME": "",
-                    "TRY_OMARCHY_OMARCHY_MENU": str(self.omarchy)}
+                    "TRY_OMARCHY_OMARCHY_MENU": str(self.omarchy), "TRY_OMARCHY_HOST_CMDLINE": str(self.cmdline)}
         self.menu = self.home / ".config/omarchy/extensions/omarchy-menu.jsonc"
         self.state = self.home / ".local/state/try-omarchy"
 
@@ -445,6 +448,60 @@ class MenuEntries(unittest.TestCase):
                        check=True)
         created = other / ".config/omarchy/extensions/omarchy-menu.jsonc"
         self.assertIn("setup.try-omarchy", self.parse(created.read_text()))
+
+    def publish_product(self, name):
+        encoded = base64.urlsafe_b64encode(name.encode()).decode().rstrip("=")
+        self.cmdline.write_text(f"omarchy.qemu_virgl=1 tryomarchy.product_name={encoded} tryomarchy.keyboard=ansi\n")
+
+    def product_name(self):
+        return subprocess.run(["python3", str(LIB / "menu-entries"), "--product-name"], check=True, text=True,
+                              capture_output=True, env={**os.environ, **self.env}).stdout.strip()
+
+    def settings_label(self):
+        return self.parse(self.menu.read_text())["setup.try-omarchy"]["label"]
+
+    def test_the_settings_row_follows_the_app_that_runs_the_vm(self):
+        self.entries()
+        self.assertEqual(self.settings_label(), "Try Omarchy Settings")
+        self.publish_product("Omarchy Installer")
+        self.entries()
+        self.assertEqual(self.settings_label(), "Omarchy Installer Settings")
+        self.cmdline.unlink()
+        self.entries()
+        self.assertEqual(self.settings_label(), "Try Omarchy Settings")
+        self.menu.write_text(self.menu.read_text().replace("Try Omarchy Settings", "Mac Settings"))
+        self.publish_product("Omarchy Installer")
+        self.entries()
+        self.assertEqual(self.settings_label(), "Mac Settings")
+
+    def test_a_settings_row_from_an_earlier_package_follows_the_app(self):
+        self.entries()
+        (self.state / "menu-rows.json").unlink()
+        self.publish_product("Omarchy Installer")
+        self.entries()
+        self.assertEqual(self.settings_label(), "Omarchy Installer Settings")
+
+    def test_a_settings_failure_names_the_app(self):
+        self.publish_product("Omarchy Installer")
+        result = subprocess.run([sys.executable, str(FILES / "usr/bin/omarchy-native-settings")], text=True,
+                                capture_output=True, env={**os.environ, **self.env, "PATH": str(self.home),
+                                                          "TRY_OMARCHY_MENU_ENTRIES": str(LIB / "menu-entries")})
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(result.stderr.startswith("Omarchy Installer Settings: "), result.stderr)
+
+    def test_the_product_name_is_the_hosts_data(self):
+        self.assertEqual(self.product_name(), "Try Omarchy")
+        for name in ("Omarchy Installer", "オマーキー", "Omarchy (Beta) 2.0", "x" * 64):
+            self.publish_product(name)
+            self.assertEqual(self.product_name(), name)
+        for name in ("<b>Omarchy</b>", "Omarchy & Co", "Omar$(id)", "Bell\x07", "Two\nLines", " Padded",
+                     "Tab\tbed", "Double  space", "Zero\u200bwidth", "x" * 65):
+            self.publish_product(name)
+            self.assertEqual(self.product_name(), "Try Omarchy", repr(name))
+        for token in ("tryomarchy.product_name=", "tryomarchy.product_name=a+b/", "tryomarchy.product_name=" + "A" * 400,
+                      "tryomarchy.product_name=" + base64.urlsafe_b64encode(b"\xff\xfe").decode()):
+            self.cmdline.write_text(token + "\n")
+            self.assertEqual(self.product_name(), "Try Omarchy", token)
 
 
 class IdleDefaults(unittest.TestCase):
