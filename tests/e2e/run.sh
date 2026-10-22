@@ -195,8 +195,8 @@ pass "first boot and setup finished in $((SECONDS - boot_start)) s ($(guest syst
 if ((run_mode)); then
   grep -q '"event":"ready"' "$out/launch-1.log.events" && pass "the run mode reports the VM ready" ||
     miss "the run mode did not report the VM ready"
-  guest test -e /dev/virtio-ports/dev.tryomarchy.settings && miss "the run mode offers the settings port" ||
-    pass "the run mode leaves the settings port out"
+  guest test -e /dev/virtio-ports/dev.tryomarchy.settings && pass "the run mode offers the settings port" ||
+    miss "the run mode left the settings port out"
 fi
 guest 'cat >/etc/sudoers.d/zz-e2e && chmod 440 /etc/sudoers.d/zz-e2e' <<<"$user ALL=(ALL) NOPASSWD: ALL"
 

@@ -295,3 +295,138 @@ struct VMRunClientTests {
         #expect(process.terminationStatus == 64)
     }
 }
+
+/// The run mode starts the VM with what the launcher stored for it; the
+/// configuration fills in only what was never stored.
+struct VMRunLaunchSettingsTests {
+    private struct Volume: VolumeProbing {
+        func capabilities(at url: URL) throws -> VolumeCapabilities {
+            VolumeCapabilities(typeName: "apfs", volumeName: "Drive", supportsCloning: true, supportsSparseFiles: true,
+                               isLocal: true, isInternal: true, availableBytes: 500_000_000_000)
+        }
+    }
+
+    private struct NotVolumeRoot: VolumeRootDetecting {
+        func isVolumeRoot(_ url: URL) -> Bool { false }
+    }
+
+    private let limits = VMResourceLimits(hostCPUCount: 10, hostMemoryBytes: 32 << 30)
+
+    private func resolve(
+        _ configuration: VMRunConfiguration,
+        storageLocation: StorageLocationPreference = .default,
+        environment: [String: String] = [:],
+        bridgedNetworkAvailable: Bool = false
+    ) -> Result<VMRunLaunchSettings, VMRunError> {
+        VMRunLaunchSettings.make(
+            baseEnvironment: environment,
+            configuration: configuration,
+            storageLocation: storageLocation,
+            settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
+            bridgedNetworkAvailable: bridgedNetworkAvailable,
+            limits: limits,
+            connectedUSBDevices: { [] },
+            homeDirectory: "/Users/nobody",
+            metrics: nil,
+            probe: Volume(),
+            volumeRootDetector: NotVolumeRoot()
+        )
+    }
+
+    @Test func storedSettingsWinOverTheConfiguration() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let settings = fixture.vmSettings(legacy: false)
+        VMResourcePreferenceStore(storage: settings).save(VMResources(cpuCount: 6, memoryGiB: 8, diskGiB: 96))
+        try PortForwardingPreferenceStore(storage: settings).save([PortForwardPreset.ssh])
+        FullscreenPreferenceStore(storage: settings).save(FullscreenPreferences(isImmersive: false, usesNotch: false))
+        try VMNetworkPreferenceStore(storage: settings).save(VMNetworkPreferences())
+
+        let configuration = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path,
+                                               memoryMiB: 4_096, cpus: 4, network: .bridged)
+        let resolved = try resolve(configuration).get()
+        #expect(resolved.stateRoot.path == fixture.root.path)
+        #expect(resolved.portForwardMappings == [PortForwardPreset.ssh])
+        let environment = resolved.environment
+        #expect(environment[StorageLocationPolicy.environmentKey] == fixture.root.path)
+        #expect(environment[VMResourceLaunchConfiguration.cpuEnvironmentKey] == "6")
+        #expect(environment[VMResourceLaunchConfiguration.memoryEnvironmentKey] == "8192")
+        #expect(environment[VMResourceLaunchConfiguration.diskEnvironmentKey] == "96")
+        #expect(environment[PortForwardPolicy.environmentKey] != nil)
+        #expect(environment[FullscreenLaunchConfiguration.immersiveEnvironmentKey] == "0")
+        #expect(environment[VMNetworkPolicy.modeKey] == VMNetworkMode.nat.rawValue)
+    }
+
+    @Test func theConfigurationFillsInWhatWasNeverStored() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let configuration = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path,
+                                               memoryMiB: 4_096, cpus: 4)
+        let environment = try resolve(configuration).get().environment
+        #expect(environment[VMResourceLaunchConfiguration.memoryEnvironmentKey] == "4096")
+        #expect(environment[VMResourceLaunchConfiguration.cpuEnvironmentKey] == "4")
+        #expect(environment[VMResourceLaunchConfiguration.diskEnvironmentKey] == nil)
+        #expect(environment[VMNetworkPolicy.modeKey] == VMNetworkMode.nat.rawValue)
+
+        let automatic = try resolve(VMRunConfiguration(productName: "Omarchy Installer",
+                                                       storageRoot: fixture.root.path)).get().environment
+        #expect(automatic[VMResourceLaunchConfiguration.memoryEnvironmentKey] == nil)
+        #expect(automatic[VMResourceLaunchConfiguration.cpuEnvironmentKey] == nil)
+    }
+
+    @Test func bridgedNeedsTheNetworkingDaemon() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let bridged = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path, network: .bridged)
+        guard case .failure(let error) = resolve(bridged) else { Issue.record("bridged started without the daemon"); return }
+        #expect(error.code == .bridgedNetworkUnavailable)
+        #expect(try resolve(bridged, bridgedNetworkAvailable: true).get()
+            .environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue)
+
+        try VMNetworkPreferenceStore(storage: fixture.vmSettings(legacy: false))
+            .save(VMNetworkPreferences(mode: .bridged, interface: "en0"))
+        let shared = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path)
+        #expect(try resolve(shared).get().environment[VMNetworkPolicy.modeKey] == VMNetworkMode.nat.rawValue)
+    }
+
+    @Test func theStoredFolderWinsAndTheEnvironmentOverrideWinsOverIt() throws {
+        let chosen = try LauncherSettingsFixture()
+        let configured = try LauncherSettingsFixture()
+        let override = try LauncherSettingsFixture()
+        for fixture in [chosen, configured, override] { try fixture.markWorkspace() }
+        let configuration = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: configured.root.path)
+        let preference = StorageLocationPreference(containerPath: chosen.root.path)
+
+        #expect(try resolve(configuration).get().stateRoot.path == configured.root.path)
+        let stored = try resolve(configuration, storageLocation: preference).get()
+        #expect(stored.stateRoot.path == StorageLocationPolicy.stateRoot(forContainer: chosen.root.resolvingSymlinksInPath().path))
+        let overridden = try resolve(configuration, storageLocation: preference,
+            environment: [StorageLocationPolicy.environmentKey: override.root.path]).get()
+        #expect(overridden.stateRoot.path == override.root.path)
+
+        let missing = StorageLocationPreference(containerPath: chosen.root.appendingPathComponent("gone").path)
+        guard case .failure(let error) = resolve(configuration, storageLocation: missing) else {
+            Issue.record("a missing chosen folder fell back to another VM"); return
+        }
+        #expect(error.code == .storageUnavailable)
+    }
+
+    @Test func developmentOverridesStillWin() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        try PortForwardingPreferenceStore(storage: fixture.vmSettings(legacy: false)).save([PortForwardPreset.ssh])
+        let configuration = VMRunConfiguration(productName: "Try Omarchy", storageRoot: fixture.root.path)
+        let resolved = try resolve(configuration, environment: [
+            PortForwardPolicy.environmentKey: "tcp:2299:22",
+            FullscreenLaunchConfiguration.immersiveEnvironmentKey: "0",
+        ]).get()
+        #expect(resolved.environment[PortForwardPolicy.environmentKey] == "tcp:2299:22")
+        #expect(resolved.environment[FullscreenLaunchConfiguration.immersiveEnvironmentKey] == "0")
+        #expect(resolved.portForwardMappings.isEmpty)
+    }
+
+    @Test func theSettingsBridgeAlwaysRuns() {
+        #expect(VMRunBridges.names([]) == "settings")
+        #expect(VMRunBridges.names([.clipboard, .timezone]) == "clipboard timezone settings")
+    }
+}

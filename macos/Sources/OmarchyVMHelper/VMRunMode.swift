@@ -4,7 +4,8 @@ import Foundation
 import TryOmarchyKitClient
 
 /// The helper's headless run mode (`--run-vm`): an app that embeds the kit
-/// starts the VM through it, with no launcher window and no settings.
+/// starts the VM through it, with the launcher's stored settings. The
+/// launcher window opens only from Omarchy's Setup menu.
 /// The protocol is in TryOmarchyKitClient/VMRunProtocol.swift.
 @MainActor
 final class VMRunModeController: NSObject, NSApplicationDelegate {
@@ -16,6 +17,12 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
     private let bundle: Bundle
     private var shutdownRequested = false
     private var finished = false
+    private let storageLocationStore = StorageLocationPreferenceStore(
+        storage: LauncherSettingsFile.storageLocation(legacy: nil)
+    )
+    private var stateRoot: URL?
+    private var settingsBridge: NativeSettingsBridge?
+    private var settingsWindow: VMRunSettingsWindow?
 
     init(configuration: VMRunConfiguration, launcherURL: URL,
          baseEnvironment: [String: String] = ProcessInfo.processInfo.environment, bundle: Bundle = .main) {
@@ -37,17 +44,24 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         session.observeHost()
         guard !shutdownRequested else { return finish(status: 0) }
         if let failure = VMRunClient.preflight() { return fail(failure) }
-        if configuration.network == .bridged, !Self.bundlesNetworkService(bundle) {
-            return fail(VMRunError(code: .bridgedNetworkUnavailable,
-                                   message: "Bridged networking is not available in \(configuration.productName)."))
+        ApplicationPresentation.installMainMenu(in: NSApp, applicationName: configuration.productName,
+                                                includesAppCommands: false)
+        let settings: VMRunLaunchSettings
+        switch VMRunLaunchSettings.make(
+            baseEnvironment: launchEnvironment(),
+            configuration: configuration,
+            storageLocation: storageLocationStore.load(),
+            settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
+            bridgedNetworkAvailable: Self.bundlesNetworkService(bundle),
+            metrics: QEMUGPUStorageSpaceEstimate.bundledMetrics(bundle: bundle)
+        ) {
+        case .success(let resolved): settings = resolved
+        case .failure(let error): return fail(error)
         }
-        let environment = launchEnvironment()
-        guard let stateRoot = QEMUGPUStorageSpaceEstimate.storageRootURL(environment: environment) else {
-            return fail(VMRunError(code: .storageUnavailable, message: "The VM's storage folder is not usable."))
-        }
+        stateRoot = settings.stateRoot
         let context = VMRunSession.LaunchContext(
-            environment: environment,
-            stateRoot: stateRoot.path,
+            environment: settings.environment,
+            stateRoot: settings.stateRoot.path,
             storageUnavailableReason: nil,
             mayCreateFactoryRoot: true
         )
@@ -56,7 +70,17 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
                 try NetworkService.prepare()
                 try NetworkService.verifyConnection()
             }
+            try PortForwardAvailability.validate(settings.portForwardMappings)
         })
+    }
+
+    /// Quitting from the settings window, the Dock or a logout shuts Omarchy
+    /// down, as quitting the app that started it does. The process exits
+    /// once Omarchy has.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        settingsWindow?.close()
+        requestShutdown()
+        return .terminateLater
     }
 
     /// The command, the end of standard input, or a first signal.
@@ -95,20 +119,33 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
             catalog: CoreAudioHostAudioDeviceProvider().catalog()
         ).environment
         environment = LanguageLaunchConfiguration.make(baseEnvironment: environment).environment
-        if let storageRoot = configuration.storageRoot {
-            environment[StorageLocationPolicy.environmentKey] = storageRoot
-        }
-        if let memory = configuration.memoryMiB {
-            environment[VMResourceLaunchConfiguration.memoryEnvironmentKey] = String(memory)
-        }
-        if let cpus = configuration.cpus {
-            environment[VMResourceLaunchConfiguration.cpuEnvironmentKey] = String(cpus)
-        }
-        environment[VMRunBridges.environmentKey] = configuration.bridges.map(\.rawValue).joined(separator: " ")
+        environment[VMRunBridges.environmentKey] = VMRunBridges.names(configuration.bridges)
         environment[ProductName.environmentKey] = configuration.productName
-        var network = VMNetworkPreferences()
-        if configuration.network == .bridged { network.mode = .bridged }
-        return VMNetworkPolicy.environment(base: environment, preferences: network)
+        return environment
+    }
+
+    /// Omarchy's Setup menu asks for settings over the settings port.
+    private func startSettingsBridge(qmpSocketPath: String) {
+        guard let stateRoot else { return }
+        let socket = URL(fileURLWithPath: qmpSocketPath).deletingLastPathComponent()
+            .appendingPathComponent("settings.sock").path
+        do {
+            settingsBridge = try NativeSettingsBridge(socketPath: socket) { [weak self] in
+                guard let self, !self.shutdownRequested, !self.finished else { return false }
+                if self.settingsWindow == nil {
+                    self.settingsWindow = VMRunSettingsWindow(
+                        productName: self.configuration.productName,
+                        stateRoot: stateRoot,
+                        storageLocationStore: self.storageLocationStore,
+                        settings: LauncherSettingsFile.vmSettings(legacy: nil) { stateRoot },
+                        bundle: self.bundle
+                    )
+                }
+                return self.settingsWindow?.show() ?? false
+            }
+        } catch {
+            fputs("[settings] \(error.localizedDescription)\n", stderr)
+        }
     }
 
     private func handle(_ event: VMRunSession.Event) {
@@ -123,7 +160,8 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
             if let phase = VMRunPhase(rawValue: progress.phase.rawValue) {
                 emit(.progress(phase, percent: progress.percent))
             }
-        case .ready:
+        case .ready(let qmpSocketPath):
+            startSettingsBridge(qmpSocketPath: qmpSocketPath)
             emit(.ready)
         case .launchFailed(let error):
             fail(VMRunFailure.error(for: error, productName: configuration.productName))
@@ -168,9 +206,14 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Which optional bridges the launcher starts (run-qemu-gpu.sh).
+/// Which optional bridges the launcher starts (run-qemu-gpu.sh). The settings
+/// bridge always runs, so Omarchy's Setup menu shows its settings row.
 enum VMRunBridges {
     static let environmentKey = "OMARCHY_QEMU_GPU_BRIDGES"
+
+    static func names(_ bridges: [VMRunBridge]) -> String {
+        (bridges.map(\.rawValue) + ["settings"]).joined(separator: " ")
+    }
 }
 
 enum VMRunOutput {

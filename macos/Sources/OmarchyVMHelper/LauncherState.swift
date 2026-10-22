@@ -106,6 +106,11 @@ final class LauncherState {
     var usesNotch = true
     var startAutomatically = false
 
+    var productName = ProductName.defaultName
+    /// Another app runs the VM and owns starting, stopping and updates, so
+    /// only the settings remain.
+    var runsInAnotherApp = false
+
     var appVersionLabel = ""
     var appReleaseActionTitle = "Check for Updates…"
 

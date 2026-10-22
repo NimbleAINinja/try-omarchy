@@ -6,8 +6,8 @@ enum StartMenuWindowChrome {
     static let contentSize = NSSize(width: 860, height: 600)
     static let minimumContentSize = NSSize(width: 760, height: 500)
 
-    static func apply(to window: NSWindow) {
-        window.title = "Try Omarchy"
+    static func apply(to window: NSWindow, title: String = ProductName.defaultName) {
+        window.title = title
         // Each pane draws its own title beside the window buttons.
         window.titleVisibility = .hidden
         window.titlebarSeparatorStyle = .none
@@ -150,6 +150,8 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         appVersionLabel: String = InstalledAppRelease.current.label,
         appReleaseActionTitle: @escaping () -> String = { "Check for Updates…" },
         checkForAppUpdates: @escaping () -> Void = {},
+        productName: String = ProductName.current,
+        runsInAnotherApp: Bool = false,
         permissionPromptShown: @escaping () -> Bool = { true },
         setPermissionPromptShown: @escaping () -> Void = {},
         firstBootCompleted: @escaping () -> Bool = { false },
@@ -216,6 +218,8 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
 
         state.canResetStorage = canResetStorage
         state.appVersionLabel = appVersionLabel
+        state.productName = productName
+        state.runsInAnotherApp = runsInAnotherApp
         actions = makeActions()
         let host = NSHostingController(rootView: LauncherView(state: state, actions: actions))
         // Panes draw their own titles; bridging would show a second one.
@@ -224,7 +228,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         // view's own minimum frame keeps panes from collapsing.
         host.sizingOptions = [.minSize]
         window.contentViewController = host
-        StartMenuWindowChrome.apply(to: window)
+        StartMenuWindowChrome.apply(to: window, title: productName)
         window.setContentSize(StartMenuWindowChrome.contentSize)
         window.delegate = self
     }
@@ -312,7 +316,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         guard state.isRunning, !controlsBusy, !state.permissionRequestInFlight,
               window.attachedSheet == nil, portForwardingEditor == nil else { return }
         let alert = NSAlert()
-        alert.messageText = action == .restart ? "Restart Try Omarchy?" : "Shut down Omarchy to manage this VM?"
+        alert.messageText = action == .restart ? "Restart \(state.productName)?" : "Shut down Omarchy to manage this VM?"
         alert.informativeText = action == .restart
             ? "Save your work first. Omarchy will shut down and start again with your saved settings."
             : "Save your work first. The settings window will stay open so you can manage this VM."
@@ -466,7 +470,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
 
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = "Try Omarchy couldn’t start"
+        alert.messageText = "\(state.productName) couldn’t start"
         alert.informativeText = errorMessage
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window)
