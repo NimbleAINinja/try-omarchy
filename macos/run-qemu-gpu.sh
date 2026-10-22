@@ -236,6 +236,23 @@ for bridge in $enabled_bridges; do
 done
 bridge_enabled() { [[ " $enabled_bridges " == *" $1 "* ]]; }
 
+# --- product -----------------------------------------------------------------
+# QEMU owns the Omarchy window, so its Dock entry, icon and menus name the app
+# that runs the VM: Try Omarchy, or the app that embeds the kit. The Dock names
+# a process after the file it was started from, so QEMU starts through a link
+# with the product's name; the signed binary stays where it is.
+product_name=${OMARCHY_PRODUCT_NAME:-Try Omarchy}
+[[ ${#product_name} -le 1024 && $product_name != *[[:cntrl:]]* && $product_name =~ ^[^[:space:]](.*[^[:space:]])?$ ]] ||
+  fail "OMARCHY_PRODUCT_NAME must be a single-line name without surrounding spaces"
+unset TRYOMARCHY_PRODUCT_ICON
+if [[ -n ${OMARCHY_PRODUCT_ICON:-} ]]; then
+  [[ $OMARCHY_PRODUCT_ICON == /* && $OMARCHY_PRODUCT_ICON != *[[:cntrl:]]* && -f $OMARCHY_PRODUCT_ICON ]] ||
+    fail "OMARCHY_PRODUCT_ICON must be the absolute path of an icon file"
+  export TRYOMARCHY_PRODUCT_ICON=$OMARCHY_PRODUCT_ICON
+elif [[ -f $resources_dir/TryOmarchy.icns ]]; then
+  export TRYOMARCHY_PRODUCT_ICON="$resources_dir/TryOmarchy.icns"
+fi
+
 # --- resources ---------------------------------------------------------------
 host_cpu_count=$(sysctl -n hw.logicalcpu)
 ((host_cpu_count >= 4)) || fail "the guest requires at least four host CPUs"
@@ -531,6 +548,15 @@ reap_stale_work_dirs
 
 work_dir=$(mktemp -d '/private/tmp/omarchy-qemu-gpu.XXXXXX') || fail "could not create a private temporary directory"
 printf 'run-qemu-gpu:v2:%s\n' "$$" >"$work_dir/.run-qemu-gpu.owner"
+qemu_exec=$qemu_bin
+case $product_name in
+  "${qemu_bin##*/}" | */* | . | ..) ;;
+  *)
+    mkdir "$work_dir/product"
+    ln -s "$qemu_bin" "$work_dir/product/$product_name"
+    qemu_exec="$work_dir/product/$product_name"
+    ;;
+esac
 # Every exit from here on stops QEMU and the bridges and removes the work directory.
 qemu_pid=""
 decompress_pid=''
@@ -662,7 +688,7 @@ audio_output_frequency=$(host_audio_frequency output "${OMARCHY_SDL_OUTPUT_DEVIC
 audio_input_frequency=$(host_audio_frequency input "${OMARCHY_SDL_INPUT_DEVICE_NAME:-}") || audio_input_frequency=48000
 
 qemu_args=(
-  -name 'Try Omarchy'
+  -name "guest=${product_name//,/,,}"
   -machine "$qemu_machine"
   "${qemu_accel[@]}"
   -cpu 'host,pmu=off'
@@ -753,9 +779,10 @@ export OMARCHY_SDL_AUDIO_CONTROL_DIRECTORY="$audio_routes"
 
 if ((dry_run)); then
   printf '[qemu-gpu] dry-run command:' >&2
-  printf ' %q' "$qemu_bin" "${qemu_args[@]}" >&2
+  printf ' %q' "$qemu_exec" "${qemu_args[@]}" >&2
   printf '\n[qemu-gpu] host settings: %s\n' "$host_options" >&2
   printf '[qemu-gpu] Caps Lock input: %s\n' "${TRYOMARCHY_CAPS_LOCK:-caps-lock}" >&2
+  printf '[qemu-gpu] Product icon: %s\n' "${TRYOMARCHY_PRODUCT_ICON:-none}" >&2
   exit 0
 fi
 
@@ -769,7 +796,7 @@ echo "[qemu-gpu] Port forwarding: $port_forwarding_summary" >&2
 [[ -z $shared_folder ]] || echo "[qemu-gpu] Shared folder: $shared_folder (guest ~/$shared_folder_name)" >&2
 [[ -z $previous_disk ]] || echo "[qemu-gpu] Previous VM attached read-only: $previous_disk" >&2
 echo '[qemu-gpu] Launch phase: starting' >&2
-"$qemu_bin" "${qemu_args[@]}" &
+"$qemu_exec" "${qemu_args[@]}" &
 qemu_pid=$!
 printf '%s\n' "$qemu_pid" >"$work_dir/.qemu.pid"
 

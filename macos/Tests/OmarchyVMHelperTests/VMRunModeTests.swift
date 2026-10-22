@@ -97,6 +97,33 @@ struct VMRunProtocolTests {
         }
     }
 
+    @Test func iconPathMustNameAnIconFile() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-run-icon-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let icon = folder.appendingPathComponent("Installer.icns")
+        let png = folder.appendingPathComponent("Installer.PNG")
+        let text = folder.appendingPathComponent("Installer.txt")
+        for file in [icon, png, text] { try Data("icon".utf8).write(to: file) }
+        let directory = folder.appendingPathComponent("Folder.icns", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+
+        for path in [icon.path, png.path] {
+            let configuration = VMRunConfiguration(productName: "Omarchy Installer", iconPath: path)
+            #expect(try VMRunConfiguration.decode(line: configuration.encodedLine()) == configuration)
+        }
+        for path in ["Installer.icns", folder.appendingPathComponent("missing.icns").path, text.path, directory.path,
+                     icon.path + "\n"] {
+            let configuration = VMRunConfiguration(productName: "Omarchy Installer", iconPath: path)
+            #expect(throws: VMRunProtocolError.invalidConfiguration) { try configuration.encodedLine() }
+        }
+        #expect(throws: VMRunProtocolError.invalidConfiguration) {
+            try VMRunConfiguration.decode(line: Data(
+                #"{"version":1,"productName":"x","iconPath":7,"bridges":[],"network":"shared"}"#.utf8))
+        }
+    }
+
     @Test func commandsAreValidated() throws {
         #expect(try VMRunCommand.decode(line: VMRunCommand.shutdown.encodedLine()) == .shutdown)
         #expect(throws: VMRunProtocolError.invalidCommand) {

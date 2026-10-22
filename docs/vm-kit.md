@@ -22,7 +22,9 @@ The embedding app signs the kit's binaries as itself. macOS then asks for Access
 
 The app starts `omarchy-vm-helper --run-vm` from the kit, writes one configuration line to its standard input, and reads one event per line from its standard output. Diagnostics go to standard error. The protocol and its validation are in `macos/Sources/TryOmarchyKitClient/VMRunProtocol.swift`.
 
-The configuration names the product, the storage folder (the full app's default folder when absent), the optional bridges, and memory and CPUs (automatic when absent). Audio and guest status always run. The settings bridge is never part of the run mode, so the guest gets no settings port and Omarchy's Setup menu shows no settings row.
+The configuration names the product, its icon (an `.icns` or `.png` file; the kit's own icon when absent), the storage folder (the full app's default folder when absent), the optional bridges, and memory and CPUs (automatic when absent). Audio and guest status always run. The settings bridge is never part of the run mode, so the guest gets no settings port and Omarchy's Setup menu shows no settings row.
+
+The Omarchy window, its Dock entry and its application menu carry the product's name and icon. The Dock names a process after the file it starts from, so the launcher starts QEMU through a link named after the product, in the run's private folder. The signed binary stays in place. A name with a `/` cannot name a file, so its Dock entry keeps the binary's name.
 
 The run mode writes `progress` (a phase and a percent), `ready`, `stopping`, `error` (a stable code and a message) and, last, `exited`. Error codes do not change between versions; messages may.
 

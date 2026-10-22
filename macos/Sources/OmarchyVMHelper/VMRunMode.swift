@@ -106,6 +106,7 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         }
         environment[VMRunBridges.environmentKey] = configuration.bridges.map(\.rawValue).joined(separator: " ")
         environment[ProductName.environmentKey] = configuration.productName
+        environment[ProductName.iconEnvironmentKey] = configuration.iconPath
         var network = VMNetworkPreferences()
         if configuration.network == .bridged { network.mode = .bridged }
         return VMNetworkPolicy.environment(base: environment, preferences: network)
