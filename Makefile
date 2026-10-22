@@ -18,13 +18,13 @@ FORCE ?= 0
 TEST_JOBS ?= 4
 
 SHELL_TESTS := network-helper qemu-networking qemu-port-forwarding run-qemu-gpu \
-  qemu-usb-passthrough qemu-monitor-ready
+  qemu-usb-passthrough qemu-monitor-ready run-mode
 SHELL_TEST_TARGETS := $(addprefix test-shell-,$(SHELL_TESTS))
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor test guest guest-package refresh runtime firmware app kit build run run-ephemeral reset version-preflight package package-preflight release release-preflight publish clean clean-all clean-guest
 .PHONY: test-all test-contracts test-guest test-swift test-shell $(SHELL_TEST_TARGETS)
-.PHONY: test-upstream test-guest-install e2e
+.PHONY: test-upstream test-guest-install test-kit e2e
 
 help:
 	@printf '%s\n' \
@@ -35,6 +35,7 @@ help:
 	  '  make test TEST_JOBS=1  Run test suites serially for debugging' \
 	  '  make test-upstream  Check the guest package against the current Omarchy (network)' \
 	  '  make test-guest-install  Install, upgrade and remove the guest package (Docker, network)' \
+	  '  make test-kit       Check the kit make kit built (KIT_DIR=DIR checks another)' \
 	  '  make e2e            Boot a disposable VM in the app and check it end to end' \
 	  '  make build          Build only changed guest, runtime, and app inputs' \
 	  '  make build FORCE=1  Rebuild every component (the guest takes the newest Omarchy edge)' \
@@ -126,6 +127,12 @@ test-upstream:
 	@OMARCHY_UPSTREAM_ROOT="$(ROOT)/.build/upstream-omarchy" PYTHONDONTWRITEBYTECODE=1 \
 	  python3 "$(ROOT)/guest/package/tests/test_upstream.py"
 
+# A built kit, as an embedding app receives it (tests/kit/check.sh). CI builds
+# one from a stand-in guest (tests/kit/fixture-guest.py) and checks it here.
+KIT_DIR ?= $(DIST)/kit.noindex
+test-kit:
+	@"$(ROOT)/tests/kit/check.sh" "$(KIT_DIR)"
+
 # A disposable VM in the built app, first boot to second boot (tests/e2e/run.sh).
 E2E_ARGS ?=
 e2e:
@@ -185,6 +192,7 @@ kit: guest runtime firmware
 	@"$(ROOT)/macos/build-app.sh" --configuration production --kit \
 	  --guest-dir "$(GUEST_DIST)" --sign-identity "$(KIT_SIGN_IDENTITY)" \
 	  $(if $(FACTORY_DOWNLOAD_URL),--factory-download-url "$(FACTORY_DOWNLOAD_URL)")
+	@"$(ROOT)/tests/kit/check.sh" "$(DIST)/kit.noindex"
 
 build: doctor app
 	@printf 'Build output: %s\n' "$(APP)"

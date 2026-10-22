@@ -64,16 +64,19 @@ When users will notice a change, update the manual. When the design changes, upd
 
 | Level | Where | Covers |
 | --- | --- | --- |
-| `make test` | Any Mac, and CI | Unit and contract tests for the app, scripts and package |
+| `make test` | Any Mac, and CI | Unit and contract tests for the app, scripts and package, and the run mode as a real process (`run-mode.test.sh`) |
+| Build | CI (macOS) | The runtime, and the kit built from it and checked with `make test-kit` |
 | Guest checks | CI (Linux) | The package installed on today's Omarchy, and the desktop booted on a virtual display |
 | `make e2e` | An Apple Silicon Mac | The real VM: hardware virtualization, the GPU, the Mac bridges, a second boot |
 
-CI cannot boot the VM. A change to the app, the runtime or the bridges needs `make e2e`, or the PR must say it wasn't run.
+- **Every mechanism ships with its check in CI.** A PR that adds a build step, a protocol, a file format or a script adds a CI check for it.
+- **CI covers everything that can be checked without booting the VM.** `make e2e` is the only exception: a change to the app, the runtime or the bridges needs it, and the PR says whether it ran.
 
 ## Done means
 
 - The change has one concern, and its tests and docs are updated.
 - `make test` passes. For a docs-only change, `git diff --check` passes and the links resolve.
+- A new build step, protocol, file format or script has a check that runs in CI.
 - Changes to the VM, the app or the bridges pass `make e2e`.
 - Visual changes were checked in the real app or guest ([visual verification](agents/skills/visual-verification.md)).
 - The PR lists the exact commands, their results, and what wasn't checked.

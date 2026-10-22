@@ -56,6 +56,15 @@ def read(path: Path) -> dict:
     return validate(json.loads(path.read_text(encoding="utf-8")))
 
 
+def check(root: Path, path: Path) -> dict:
+    """A built kit's manifest, which must speak this checkout's run-mode protocol."""
+    value = read(path)
+    if value["runProtocolVersion"] != run_protocol_version(root):
+        raise ValueError(f"{path} names run-mode protocol {value['runProtocolVersion']}, "
+                         f"not {run_protocol_version(root)}")
+    return value
+
+
 def write(root: Path, app: Path, output: Path, built: datetime | None = None) -> dict:
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     value = manifest(kit_version(info.get("TryOmarchyBuildDescribe")), run_protocol_version(root),
@@ -67,10 +76,16 @@ def write(root: Path, app: Path, output: Path, built: datetime | None = None) ->
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
-    parser.add_argument("--app", required=True, type=Path, help="the app the kit is derived from")
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--app", type=Path, help="the app the kit is derived from")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--check", type=Path, help="a built kit's kit.json to validate instead")
     args = parser.parse_args()
-    value = write(args.root, args.app, args.output)
+    if args.check:
+        value = check(args.root, args.check)
+    elif args.app and args.output:
+        value = write(args.root, args.app, args.output)
+    else:
+        parser.error("give --app and --output, or --check")
     print(f"[kit] Version {value['version']}, run-mode protocol {value['runProtocolVersion']}")
 
 

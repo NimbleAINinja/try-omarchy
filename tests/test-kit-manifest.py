@@ -67,6 +67,18 @@ class KitManifestTests(unittest.TestCase):
             path.write_text(json.dumps(valid))
             self.assertEqual(kit_manifest.read(path), valid)
 
+    def test_checks_a_built_kit_against_this_checkout(self) -> None:
+        protocol = kit_manifest.run_protocol_version(REPOSITORY)
+        valid = {"format": 1, "version": "development", "runProtocolVersion": protocol,
+                 "buildDate": "2026-10-23T09:30:05Z"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "kit.json"
+            path.write_text(json.dumps(valid))
+            self.assertEqual(kit_manifest.check(REPOSITORY, path), valid)
+            path.write_text(json.dumps(dict(valid, runProtocolVersion=protocol + 1)))
+            with self.assertRaises(ValueError):
+                kit_manifest.check(REPOSITORY, path)
+
 
 if __name__ == "__main__":
     unittest.main()

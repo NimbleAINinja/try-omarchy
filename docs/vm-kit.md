@@ -16,6 +16,8 @@ The full app and the run mode run the VM through the same session (`VMRunSession
 
 The kit carries the helper, the QEMU runtime, the firmware, the launch scripts, the `try-omarchy` package and the image's download manifest. It does not carry the image: its first start downloads the parts from the release the kit came from. Releases are never deleted, because installers pinned to an old kit need its parts.
 
+CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature, `kit.json`, that no bridged-networking daemon is inside, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
+
 The embedding app signs the kit's binaries as itself. macOS then asks for Accessibility, Microphone and Camera in that app's name.
 
 ## The kit's version
@@ -49,6 +51,8 @@ The configuration names the product, its icon (an `.icns` or `.png` file; the ki
 The Omarchy window, its Dock entry and its application menu carry the product's name and icon. The Dock names a process after the file it starts from, so the launcher starts QEMU through a link named after the product, in the run's private folder. The signed binary stays in place. A name with a `/` cannot name a file, so its Dock entry keeps the binary's name.
 
 The run mode writes `progress` (a phase and a percent), `ready`, `stopping`, `error` (a stable code and a message) and, last, `exited`. Error codes do not change between versions; messages may.
+
+`make test` starts the run mode as a real process (`macos/Tests/run-mode.test.sh`), with a kit whose launcher serves QMP but runs no VM and a factory served on the loopback interface. `OMARCHY_VM_RUN_TEST_SKIP_PREFLIGHT=1` lets it run on CI runners without a hypervisor; `VMRunClient` never passes it on.
 
 The run mode shuts down when it reads the `shutdown` command, when its input closes, or on a first signal. It asks Omarchy to shut down over QMP, waits up to a minute, then stops QEMU. So an app that crashes or is force-quit still shuts Omarchy down. A second signal stops QEMU at once.
 
