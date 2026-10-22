@@ -24,7 +24,7 @@ class ReleaseTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "scripts").mkdir()
         (self.root / "macos").mkdir()
-        for name in ("release.py", "app_version.py"):
+        for name in ("release.py", "app_version.py", "kit_manifest.py"):
             shutil.copy2(REPOSITORY / "scripts" / name, self.root / "scripts" / name)
         # Keep the actual public release/preflight recipes; substitute only the
         # expensive guest, runtime, and signed app builders at their boundaries.
@@ -100,6 +100,12 @@ kit.write_text("test kit\\n")
 digest = os.environ.get("WRONG_KIT_DIGEST") or __import__("hashlib").sha256(kit.read_bytes()).hexdigest()
 (kit.parent / "TryOmarchyKit.zip.sha256").write_text(f"{digest}  TryOmarchyKit.zip\\n")
 tag = plistlib.loads(plist.read_bytes())["TryOmarchyBuildDescribe"]
+kit_resources = kit.parent / "Try Omarchy Kit.app/Contents/Resources"
+kit_resources.mkdir(parents=True, exist_ok=True)
+kit_json = json.dumps({"format": 1, "version": os.environ.get("WRONG_KIT_VERSION", tag),
+                       "runProtocolVersion": 1, "buildDate": "2026-10-23T12:00:00Z"})
+(kit_resources / "kit.json").write_text(kit_json)
+(kit.parent / "TryOmarchyKit.json").write_text(kit_json)
 part = out / "factory/omarchy-aarch64-edge.img.zst.001"
 part.parent.mkdir(exist_ok=True)
 part.write_text("image")
@@ -191,6 +197,12 @@ manifest.write_text(json.dumps({"parts": [{"url": url, "bytes": 5}]}))
     def test_release_kit_matches_its_recorded_digest(self) -> None:
         result = self.run_release(WRONG_KIT_DIGEST="0" * 64)
         self.assert_failed(result, "the kit's recorded digest does not match")
+
+    def test_release_kit_manifest_names_the_release(self) -> None:
+        for version in ("v9.9.9", "development"):
+            with self.subTest(version=version):
+                result = self.run_release(WRONG_KIT_VERSION=version)
+                self.assert_failed(result, "the kit's manifest does not name v1.2.3")
 
     def test_release_requires_stable_dmg(self) -> None:
         for name in ("TryOmarchy-v1.2.3.dmg", "TryOmarchy-v1.2.2.dmg"):

@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 from app_version import build_version
+import kit_manifest
 
 
 VERSION = re.compile(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -128,6 +129,15 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
     if recorded != actual:
         raise ValueError(f"the kit's recorded digest does not match {kit}")
 
+    # Installers compare kits by this version before and after downloading one.
+    try:
+        published = kit_manifest.read(kit.parent / "TryOmarchyKit.json")
+        bundled = kit_manifest.read(kit.parent / "Try Omarchy Kit.app/Contents/Resources/kit.json")
+    except (OSError, ValueError) as error:
+        raise ValueError(f"the kit has no valid manifest: {error}") from error
+    if published != bundled or published["version"] != tag:
+        raise ValueError(f"the kit's manifest does not name {tag}")
+
     # The app downloads its factory from this release's assets.
     try:
         manifest = json.loads((app / "Contents/Resources/guest/download.json").read_text())
@@ -147,7 +157,7 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
 def release_assets(root: Path) -> list[Path]:
     kit = root / "dist/kit.noindex"
     return [root / "dist/TryOmarchy.dmg", kit / "TryOmarchyKit.zip", kit / "TryOmarchyKit.zip.sha256",
-            *sorted((root / "dist/factory").glob("*"))]
+            kit / "TryOmarchyKit.json", *sorted((root / "dist/factory").glob("*"))]
 
 
 def prepare_factory(root: Path, make: str, force: bool) -> None:

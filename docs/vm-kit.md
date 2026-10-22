@@ -18,6 +18,28 @@ The kit carries the helper, the QEMU runtime, the firmware, the launch scripts, 
 
 The embedding app signs the kit's binaries as itself. macOS then asks for Accessibility, Microphone and Camera in that app's name.
 
+## The kit's version
+
+Every kit carries a manifest, `Contents/Resources/kit.json`, and each release also publishes it as `TryOmarchyKit.json`, so an app can read it before downloading the kit. `TryOmarchyKit.manifest()` in the client reads and validates it.
+
+```json
+{
+  "format": 1,
+  "version": "v1.2.3",
+  "runProtocolVersion": 1,
+  "buildDate": "2026-10-23T09:30:05Z"
+}
+```
+
+- `version` is the release tag the kit was built from. A kit built from anything else, such as `make kit` on an untagged or modified commit, says `development`.
+- `runProtocolVersion` is the run-mode protocol its helper speaks. A client runs only a kit with its own protocol version (`isSupported`).
+- `buildDate` is when the kit was built, in UTC.
+- Readers ignore keys they do not know. `format` changes only when a known key changes meaning.
+
+Releases compare by their numbers (`TryOmarchyKitVersion`). A development kit compares newer than every release, so an app built with one keeps it rather than replacing it with a fetched kit. An app never runs a kit older than the one it embeds. A kit without a manifest predates it, so it is older than any kit that has one.
+
+`make release` checks that the kit's manifest names the release's tag.
+
 ## The run mode
 
 The app starts `omarchy-vm-helper --run-vm` from the kit, writes one configuration line to its standard input, and reads one event per line from its standard output. Diagnostics go to standard error. The protocol and its validation are in `macos/Sources/TryOmarchyKitClient/VMRunProtocol.swift`.

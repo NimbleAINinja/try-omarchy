@@ -6,8 +6,9 @@
 #
 #   macos/build-kit.sh --app APP --output DIR [--sign-identity IDENTITY]
 #
-# Writes DIR/Try Omarchy Kit.app, DIR/TryOmarchyKit.zip and its digest,
-# DIR/TryOmarchyKit.zip.sha256. The embedding app signs the kit as itself.
+# Writes DIR/Try Omarchy Kit.app, DIR/TryOmarchyKit.zip, its digest
+# DIR/TryOmarchyKit.zip.sha256, and DIR/TryOmarchyKit.json, a copy of the
+# kit's manifest (docs/vm-kit.md). The embedding app signs the kit as itself.
 
 set -euo pipefail
 
@@ -34,6 +35,7 @@ done
 [[ -n $app && -n $output ]] || usage
 [[ -d $app && ! -L $app ]] || fail "no app at $app"
 macos_dir=$(cd "$(dirname "$0")" && pwd -P)
+repo_dir=$(cd "$macos_dir/.." && pwd -P)
 app=$(cd "$app" && pwd -P)
 mkdir -p "$output"
 output=$(cd "$output" && pwd -P)
@@ -44,7 +46,8 @@ archive="$output/TryOmarchyKit.zip"
 contents="$kit/Contents"
 guest="$contents/Resources/guest"
 
-rm -rf "$kit" "$archive" "$archive.sha256"
+manifest="$output/TryOmarchyKit.json"
+rm -rf "$kit" "$archive" "$archive.sha256" "$manifest"
 ditto "$app" "$kit"
 rm -rf "$contents/_CodeSignature" "$contents/Library" "$contents/Resources/network" \
   "$contents/MacOS/omarchy-network-daemon"
@@ -65,6 +68,7 @@ value["LSUIElement"] = True
 value["TryOmarchyKitFormat"] = 1
 path.write_bytes(plistlib.dumps(value))
 PYTHON
+python3 "$repo_dir/scripts/kit_manifest.py" --root "$repo_dir" --app "$app" --output "$contents/Resources/kit.json"
 
 sign_options=(--force --sign "$sign_identity" --identifier dev.tryomarchy.kit
   --entitlements "$macos_dir/omarchy-vm-helper.entitlements")
@@ -80,4 +84,5 @@ OMARCHY_QEMU_GPU_INSPECT_ONLY=1 "$contents/Resources/scripts/run-qemu-gpu.sh" >/
 (cd "$output" && ditto -c -k --keepParent "$kit_name" "$archive")
 digest=$(/usr/bin/shasum -a 256 "$archive" | cut -d' ' -f1)
 printf '%s  %s\n' "$digest" "${archive##*/}" >"$archive.sha256"
+cp "$contents/Resources/kit.json" "$manifest"
 echo "[kit] Built $archive ($digest)"

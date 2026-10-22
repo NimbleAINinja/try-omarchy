@@ -107,6 +107,7 @@ test-contracts:
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-profile-process.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-development-sign-identity.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-app-version.py"
+	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-kit-manifest.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-release.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-publish.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-package-dmg.py"
