@@ -43,6 +43,18 @@ struct StorageLocationPreferenceStore {
         return StorageLocationPreference(containerPath: payload.containerPath)
     }
 
+    /// Set when a choice is stored but unusable. The default folder is then
+    /// a different VM, never a safe answer.
+    func problem() -> String? {
+        if let reason = storage.untrustedReason { return "Omarchy’s VM folder setting can’t be read: \(reason)" }
+        guard let data = storage.settingData(forKey: Self.key) else { return nil }
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              payload.schemaVersion == Self.schemaVersion,
+              payload.containerPath.map({ $0.hasPrefix("/") }) ?? true
+        else { return "Omarchy’s VM folder setting was saved by a newer version or is damaged." }
+        return nil
+    }
+
     func save(_ preference: StorageLocationPreference) {
         let payload = Payload(
             schemaVersion: Self.schemaVersion,

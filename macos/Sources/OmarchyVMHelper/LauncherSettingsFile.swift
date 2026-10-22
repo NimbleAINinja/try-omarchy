@@ -1,17 +1,20 @@
 import Darwin
 import Foundation
 
-/// Where a preference store keeps its versioned values.
 protocol LauncherSettingsStorage: AnyObject {
     func settingData(forKey key: String) -> Data?
     func setSettingData(_ data: Data, forKey key: String)
     func removeSetting(forKey key: String)
+    /// Set when values are stored but cannot be trusted, so their absence
+    /// must not be read as the default.
+    var untrustedReason: String? { get }
 }
 
 extension UserDefaults: LauncherSettingsStorage {
     func settingData(forKey key: String) -> Data? { data(forKey: key) }
     func setSettingData(_ data: Data, forKey key: String) { set(data, forKey: key) }
     func removeSetting(forKey key: String) { removeObject(forKey: key) }
+    var untrustedReason: String? { nil }
 }
 
 /// A private, versioned JSON file of settings. UserDefaults follow the identity
@@ -20,13 +23,16 @@ extension UserDefaults: LauncherSettingsStorage {
 ///
 /// The VM's settings wait for the launcher to mark its folder: a file in an
 /// empty folder someone picked would make the folder look used. Until then the
-/// full app keeps them in `legacy`, where its older settings already are, and
-/// they move into the file once the folder is ready and has no file.
+/// full app keeps them in `legacy`, where its older settings already are. Each
+/// legacy value moves into the file the first time the file lacks its key,
+/// whichever app writes the file first. The run mode reads the full app's
+/// preferences without changing them, so the full app removes them later.
 final class LauncherSettingsFile: LauncherSettingsStorage {
     static let schemaVersion = 1
     static let maximumBytes = 65_536
     static let vmSettingsFileName = "settings.json"
     static let storageLocationFileName = "storage-location.json"
+    static let fullAppPreferencesDomain = "dev.tryomarchy.native"
 
     static let vmSettingKeys = [
         VMResourcePreferenceStore.key,
@@ -39,9 +45,9 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
     ]
 
     private enum Location {
-        /// A launcher-marked VM folder; the file is never created elsewhere.
+        /// A file there before the launcher marks the folder would make a
+        /// chosen empty folder look used.
         case workspace
-        /// A folder of its own, created when missing.
         case folder
     }
 
@@ -49,20 +55,31 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
     private let directory: () -> URL?
     private let location: Location
     private let legacy: UserDefaults?
+    private let legacyIsWritable: Bool
+    private let adoptsLegacy: () -> Bool
     private let legacyKeys: [String]
 
-    private init(fileName: String, location: Location, legacy: UserDefaults?, legacyKeys: [String],
-                 directory: @escaping () -> URL?) {
+    private init(fileName: String, location: Location, legacy: UserDefaults?, legacyIsWritable: Bool,
+                 adoptsLegacy: @escaping () -> Bool, legacyKeys: [String], directory: @escaping () -> URL?) {
         self.fileName = fileName
         self.location = location
         self.legacy = legacy
+        self.legacyIsWritable = legacyIsWritable
+        self.adoptsLegacy = adoptsLegacy
         self.legacyKeys = legacyKeys
         self.directory = directory
     }
 
-    /// The settings of the VM whose storage folder `root` returns.
-    static func vmSettings(legacy: UserDefaults?, root: @escaping () -> URL?) -> LauncherSettingsFile {
+    /// A scratch VM chosen by the environment must not take the person's
+    /// settings, so `adoptsLegacy` is false for it.
+    static func vmSettings(
+        legacy: UserDefaults?,
+        legacyIsWritable: Bool = true,
+        adoptsLegacy: @escaping () -> Bool = { true },
+        root: @escaping () -> URL?
+    ) -> LauncherSettingsFile {
         LauncherSettingsFile(fileName: vmSettingsFileName, location: .workspace, legacy: legacy,
+                             legacyIsWritable: legacyIsWritable, adoptsLegacy: adoptsLegacy,
                              legacyKeys: vmSettingKeys, directory: root)
     }
 
@@ -70,9 +87,11 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
     /// stays in the fixed `Try Omarchy` folder that every kit resolves.
     static func storageLocation(
         legacy: UserDefaults?,
+        legacyIsWritable: Bool = true,
         directory: URL? = defaultStorageLocationDirectory()
     ) -> LauncherSettingsFile {
         LauncherSettingsFile(fileName: storageLocationFileName, location: .folder, legacy: legacy,
+                             legacyIsWritable: legacyIsWritable, adoptsLegacy: { true },
                              legacyKeys: [StorageLocationPreferenceStore.key], directory: { directory })
     }
 
@@ -81,10 +100,17 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
             .appendingPathComponent(StorageLocationPolicy.workspaceDirectoryName, isDirectory: true)
     }
 
+    /// Try Omarchy's own preferences, for an app running the kit under
+    /// another identity. Read only: the full app removes them once moved.
+    static func fullAppPreferences() -> UserDefaults {
+        UserDefaults(suiteName: fullAppPreferencesDomain) ?? .standard
+    }
+
     func settingData(forKey key: String) -> Data? {
         guard let folder = readyFolder(creating: hasLegacySettings) else { return legacy?.data(forKey: key) }
-        adoptLegacySettings(in: folder)
-        guard let value = read(in: folder)?[key] else { return nil }
+        if hasLegacySettings { try? withLock(folder) { try adoptLegacySettings(in: folder) } }
+        guard case .settings(_, let settings)? = try? contents(in: folder), let value = settings[key],
+              !(value is NSNull) else { return nil }
         return try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
     }
 
@@ -93,113 +119,167 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
         update(key: key, value: value)
     }
 
+    /// Kept as null rather than dropped, so a legacy value never comes back.
     func removeSetting(forKey key: String) {
-        update(key: key, value: nil)
+        update(key: key, value: NSNull())
     }
 
-    /// Moves the full app's older values into the file, once the folder is
-    /// ready and still has no file. Reads do this too.
+    var untrustedReason: String? {
+        guard let folder = directory()?.standardizedFileURL else { return nil }
+        var information = stat()
+        guard lstat(folder.path, &information) == 0 else { return nil }
+        guard let ready = readyFolder(creating: false) else {
+            return location == .folder ? "\(folder.path) is not a private folder." : nil
+        }
+        do {
+            if case .unreadable = try contents(in: ready), location == .folder {
+                return "\(ready.appendingPathComponent(fileName).path) is damaged."
+            }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     func adoptLegacySettings() {
-        guard let folder = readyFolder(creating: hasLegacySettings) else { return }
-        adoptLegacySettings(in: folder)
+        guard hasLegacySettings, let folder = readyFolder(creating: true) else { return }
+        try? withLock(folder) { try adoptLegacySettings(in: folder) }
     }
 
     private var hasLegacySettings: Bool {
-        guard let legacy else { return false }
+        guard let legacy, adoptsLegacy() else { return false }
         return legacyKeys.contains { legacy.object(forKey: $0) != nil }
     }
 
-    private func update(key: String, value: Any?) {
+    private func update(key: String, value: Any) {
         guard let folder = readyFolder(creating: true) else {
-            guard let legacy else {
+            guard let legacy, legacyIsWritable else {
                 fputs("[settings] The settings folder is unavailable; \(key) was not saved.\n", stderr)
                 return
             }
-            legacy.set(value.flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.fragmentsAllowed]) },
-                       forKey: key)
+            if let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
+               !(value is NSNull) {
+                legacy.set(data, forKey: key)
+            } else {
+                legacy.removeObject(forKey: key)
+            }
             return
         }
-        adoptLegacySettings(in: folder)
         do {
-            var settings: [String: Any]
-            switch try existingSettings(in: folder) {
-            case .absent, .unreadable: settings = [:]
-            case .settings(let stored): settings = stored
+            try withLock(folder) {
+                if hasLegacySettings { try adoptLegacySettings(in: folder) }
+                var (object, settings) = try storedObject(in: folder)
+                settings[key] = value
+                object["settings"] = settings
+                try write(object, in: folder)
             }
-            settings[key] = value
-            try write(settings, in: folder)
         } catch {
             fputs("[settings] \(key) was not saved: \(error.localizedDescription)\n", stderr)
         }
     }
 
-    private func adoptLegacySettings(in folder: URL) {
-        guard let legacy, case .absent? = try? existingSettings(in: folder) else { return }
-        var settings: [String: Any] = [:]
-        for key in legacyKeys {
+    /// Call with the folder locked.
+    private func adoptLegacySettings(in folder: URL) throws {
+        guard let legacy, adoptsLegacy() else { return }
+        var (object, settings) = try storedObject(in: folder)
+        var adopted = false
+        for key in legacyKeys where settings[key] == nil {
             guard let data = legacy.data(forKey: key),
                   let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
             else { continue }
             settings[key] = value
+            adopted = true
         }
-        guard !settings.isEmpty else { return }
-        do {
-            try write(settings, in: folder)
-            for key in legacyKeys { legacy.removeObject(forKey: key) }
-        } catch {
-            fputs("[settings] Older settings could not move into \(fileName): \(error.localizedDescription)\n", stderr)
+        if adopted {
+            object["settings"] = settings
+            try write(object, in: folder)
         }
+        guard legacyIsWritable else { return }
+        for key in legacyKeys where settings[key] != nil { legacy.removeObject(forKey: key) }
     }
 
     private enum Contents {
         case absent
         /// Damaged content, which the next save replaces.
         case unreadable
-        case settings([String: Any])
+        case settings(object: [String: Any], settings: [String: Any])
     }
 
-    /// Throws for a file that must not be read or replaced: not a private
-    /// regular file, too large, or written by a newer schema.
-    private func existingSettings(in folder: URL) throws -> Contents {
+    /// Throws for a file that must be neither read nor replaced.
+    private func contents(in folder: URL) throws -> Contents {
         let url = folder.appendingPathComponent(fileName)
         var information = stat()
         guard lstat(url.path, &information) == 0 else {
-            guard errno == ENOENT else { throw HelperError.io("\(fileName) could not be checked.") }
+            guard errno == ENOENT else { throw HelperError.io("\(url.path) could not be checked.") }
             return .absent
         }
         guard Self.isPrivate(information, type: S_IFREG, permissions: 0o600) else {
-            throw HelperError.io("\(fileName) is not a private regular file.")
+            throw HelperError.io("\(url.path) is not a private file.")
         }
-        guard information.st_size <= Self.maximumBytes else { throw HelperError.io("\(fileName) is too large.") }
+        guard information.st_size <= Self.maximumBytes else { throw HelperError.io("\(url.path) is too large.") }
         guard let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let version = object["schemaVersion"] as? NSNumber,
               CFGetTypeID(version) != CFBooleanGetTypeID(),
               let settings = object["settings"] as? [String: Any]
         else { return .unreadable }
-        guard version.intValue == Self.schemaVersion, version.doubleValue == Double(Self.schemaVersion) else {
-            throw HelperError.io("\(fileName) was written by a newer version.")
+        guard version.doubleValue == Double(Self.schemaVersion) else {
+            throw HelperError.io("\(url.path) was written by a newer version.")
         }
-        return .settings(settings)
+        return .settings(object: object, settings: settings)
     }
 
-    private func read(in folder: URL) -> [String: Any]? {
-        guard case .settings(let settings)? = try? existingSettings(in: folder) else { return nil }
-        return settings
+    private func storedObject(in folder: URL) throws -> (object: [String: Any], settings: [String: Any]) {
+        switch try contents(in: folder) {
+        case .absent, .unreadable: return ([:], [:])
+        case .settings(let object, let settings): return (object, settings)
+        }
     }
 
-    private func write(_ settings: [String: Any], in folder: URL) throws {
-        let data = try JSONSerialization.data(
-            withJSONObject: ["schemaVersion": Self.schemaVersion, "settings": settings],
-            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        )
+    /// The file is private from its first byte, so a crash never leaves a
+    /// readable copy that later loads would refuse.
+    private func write(_ object: [String: Any], in folder: URL) throws {
+        var object = object
+        object["schemaVersion"] = Self.schemaVersion
+        let data = try JSONSerialization.data(withJSONObject: object,
+                                              options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         guard data.count <= Self.maximumBytes else { throw HelperError.io("\(fileName) would be too large.") }
-        let url = folder.appendingPathComponent(fileName)
-        try data.write(to: url, options: .atomic)
-        guard chmod(url.path, 0o600) == 0 else { throw HelperError.io("\(fileName) could not be made private.") }
+        let temporary = folder.appendingPathComponent(".\(fileName).\(UUID().uuidString)")
+        let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw HelperError.io("\(fileName) could not be created.") }
+        var written = 0
+        let complete = data.withUnsafeBytes { buffer -> Bool in
+            while written < buffer.count {
+                let count = Darwin.write(descriptor, buffer.baseAddress! + written, buffer.count - written)
+                if count > 0 {
+                    written += count
+                } else if count < 0 && errno == EINTR {
+                    continue
+                } else {
+                    return false
+                }
+            }
+            return true
+        }
+        let saved = complete && fchmod(descriptor, 0o600) == 0 && fsync(descriptor) == 0
+        close(descriptor)
+        guard saved, rename(temporary.path, folder.appendingPathComponent(fileName).path) == 0 else {
+            unlink(temporary.path)
+            throw HelperError.io("\(fileName) could not be saved.")
+        }
     }
 
-    /// The folder when it is safe to use, or nil.
+    /// The full app and the run mode can both save while one runs the VM.
+    private func withLock(_ folder: URL, _ body: () throws -> Void) throws {
+        let descriptor = open(folder.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw HelperError.io("\(folder.path) could not be opened.") }
+        defer { close(descriptor) }
+        while flock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else { throw HelperError.io("\(folder.path) could not be locked.") }
+        }
+        try body()
+    }
+
     private func readyFolder(creating: Bool) -> URL? {
         guard let folder = directory()?.standardizedFileURL else { return nil }
         var information = stat()

@@ -114,8 +114,12 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         let storageLocationStore = StorageLocationPreferenceStore(
             storage: LauncherSettingsFile.storageLocation(legacy: legacyPreferences)
         )
-        let vmSettings = LauncherSettingsFile.vmSettings(legacy: legacyPreferences) {
-            QEMUGPUStorageSpaceEstimate.storageRootURL(environment: baseEnvironment, preference: storageLocationStore.load())
+        let inheritsStateRoot = baseEnvironment[StorageLocationPolicy.environmentKey]?.isEmpty == false
+        let vmSettings = LauncherSettingsFile.vmSettings(legacy: legacyPreferences,
+                                                         adoptsLegacy: { !inheritsStateRoot }) {
+            guard inheritsStateRoot || storageLocationStore.problem() == nil else { return nil }
+            return QEMUGPUStorageSpaceEstimate.storageRootURL(environment: baseEnvironment,
+                                                              preference: storageLocationStore.load())
         }
         self.vmSettings = vmSettings
         self.sharedFolderStore = SharedFolderPreferenceStore(storage: vmSettings)
@@ -615,11 +619,13 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
             probe: volumeProbe,
             volumeRootDetector: volumeRootDetector
         )
+        let pointerProblem = storageEnvironment[StorageLocationPolicy.environmentKey]?.isEmpty == false
+            ? nil : storageLocationProblem()
         return ChildLaunchContext(
             environment: VMNetworkPolicy.environment(base: storage.environment, preferences: resolvedNetworkPreferences()),
-            stateRoot: storage.resolvedStateRoot?.path,
+            stateRoot: pointerProblem == nil ? storage.resolvedStateRoot?.path : nil,
             portForwardMappings: forwarding.mappings,
-            storageUnavailableReason: storage.unavailableReason
+            storageUnavailableReason: storage.unavailableReason ?? pointerProblem
         )
     }
 
@@ -740,7 +746,12 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
     }
 
     private func storageLocationMenuState() -> StorageLocationMenuState {
-        StorageLocationMenuState.make(
+        if let problem = storageLocationProblem() {
+            return StorageLocationMenuState(containerPath: nil, stateRoot: nil, displayPath: nil, volumeName: nil,
+                                            isDefault: false, isExternal: false, problem: problem, warning: nil,
+                                            isEnvironmentOverride: false)
+        }
+        return StorageLocationMenuState.make(
             preference: storageLocationStore.load(),
             metrics: bundledMetrics,
             homeDirectory: Self.homeDirectory,
@@ -913,11 +924,25 @@ final class VMApplicationController: NSObject, NSApplicationDelegate {
         return (configured?.isEmpty == false) ? configured : nil
     }
 
+    private func storageLocationProblem() -> String? {
+        storageEnvironmentOverride == nil ? storageLocationStore.problem() : nil
+    }
+
     private func resolveStorageLocationAvailability(forReset: Bool = false) -> StorageAvailability {
         // An override wins over the preference on the way to the launcher, so
         // the preference's reachability says nothing about this run. The
         // launcher validates the override itself and fails loudly.
         if storageEnvironmentOverride != nil { return .available }
+        if let problem = storageLocationProblem() {
+            startMenuWindow?.show()
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "Omarchy\u{2019}s data folder is unknown"
+            alert.informativeText = "\(problem) Fix or remove that file, then try again. Starting from the default folder could open a different VM."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return .cancelled
+        }
         let preference = storageLocationStore.load()
         guard let container = preference.containerPath else { return .available }
         do {
