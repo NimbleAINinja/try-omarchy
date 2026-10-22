@@ -115,10 +115,10 @@ Next, in this repository:
 
 Next, in the installer:
 
-1. The choice page on a supported Mac, and the Try page as the only page on an unsupported Mac or one with Omarchy installed.
-2. The remembered choice: a VM in the default folder opens Try and starts Omarchy, with the inspection in the background.
-3. **Install on this Mac…** and **Delete Virtual Machine…** in the Installation menu, and the Allow rows on the running page.
-4. Drop the **Open in Try Omarchy** handoff; say which app holds the VM on `vm-already-open`.
+1. Done: the choice page on a supported Mac, and the Try page as the only page on an unsupported Mac or one with Omarchy installed.
+2. Done: the remembered choice: a VM in the default folder opens Try and starts Omarchy, with the inspection in the background.
+3. Done: **Install on this Mac…** and **Delete Virtual Machine…** in the Installation menu, and the Allow rows on the running page.
+4. Done: the **Open in Try Omarchy** handoff is gone, and `vm-already-open` names Try Omarchy.
 5. The kit built into the installer's bundle under its identity.
 6. Fetching, verifying and switching to newer kits.
 
