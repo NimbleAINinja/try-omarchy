@@ -8,8 +8,9 @@
 #
 # Host settings reach the guest as the systemd credential tryomarchy.host
 # (SMBIOS type 11), never on the kernel command line, which is the guest's.
-# The app reads the progress lines ("[qemu-gpu] Launch phase: …", "Reset
-# phase: …", "Ready. QMP: …") and maps "run-qemu-gpu: …" errors.
+# The app reads the progress lines ("[qemu-gpu] Launch phase: …", "Launch
+# progress: …", "Reset phase: …", "Ready. QMP: …") and maps "run-qemu-gpu: …"
+# errors.
 
 set -euo pipefail
 
@@ -427,7 +428,7 @@ prepare_factory_disk() {
   [[ -n $compressed && -f $compressed && ! -L $compressed ]] ||
     fail "the Omarchy image has not been downloaded; open Try Omarchy to download it"
   echo '[qemu-gpu] Preparing the Omarchy factory disk (first launch only)...' >&2
-  echo '[qemu-gpu] Launch phase: preparing' >&2
+  echo '[qemu-gpu] Launch phase: verifying' >&2
   local stale
   for stale in "$factory_cache"/*.img "$factory_cache"/*.partial; do
     [[ -e $stale ]] && rm -f "$stale"
@@ -437,9 +438,10 @@ prepare_factory_disk() {
   local actual available
   actual=$(/usr/bin/shasum -a 256 "$compressed" | cut -d' ' -f1)
   [[ $actual == "$compressed_sha" ]] || fail "the Omarchy factory image is damaged: $compressed"
+  echo '[qemu-gpu] Launch phase: preparing' >&2
   # A failed decompression (most often a full disk) must not leave gigabytes
   # of partial disk behind.
-  if ! "$zstd_bin" -q -d --sparse -f "$compressed" -o "$factory_disk.partial"; then
+  if ! decompress_factory_disk; then
     rm -f "$factory_disk.partial"
     available=$(free_bytes "$factory_cache") || available=0
     ((available >= 1073741824)) || fail "not enough free space to prepare the Omarchy VM; free up some space and launch again"
@@ -452,6 +454,26 @@ prepare_factory_disk() {
   # data and zeros alternate; return those blocks (about half the disk).
   "$native_bridge" --sparsify "$factory_disk.partial" >/dev/null || true
   mv -f "$factory_disk.partial" "$factory_disk"
+}
+
+# The sparse output grows to its full size as zstd writes it, so its size
+# measures progress.
+decompress_factory_disk() {
+  local size percent reported=-1 status=0
+  "$zstd_bin" -q -d --sparse -f "$compressed" -o "$factory_disk.partial" &
+  decompress_pid=$!
+  while kill -0 "$decompress_pid" 2>/dev/null; do
+    size=$(stat -f %z "$factory_disk.partial" 2>/dev/null) || size=0
+    percent=$((size * 100 / disk_bytes))
+    if ((percent > reported && percent < 100)); then
+      echo "[qemu-gpu] Launch progress: $percent" >&2
+      reported=$percent
+    fi
+    sleep 0.25
+  done
+  wait "$decompress_pid" || status=$?
+  decompress_pid=''
+  return "$status"
 }
 
 new_disk() { # destination
@@ -492,6 +514,7 @@ work_dir=$(mktemp -d '/private/tmp/omarchy-qemu-gpu.XXXXXX') || fail "could not 
 printf 'run-qemu-gpu:v2:%s\n' "$$" >"$work_dir/.run-qemu-gpu.owner"
 # Every exit from here on stops QEMU and the bridges and removes the work directory.
 qemu_pid=""
+decompress_pid=''
 bridge_pids=()
 
 terminate() { # pid attempts
@@ -511,6 +534,7 @@ cleanup() {
   trap - EXIT HUP INT TERM
   set +e
   [[ -z $qemu_pid ]] || terminate "$qemu_pid" 40
+  [[ -z $decompress_pid ]] || terminate "$decompress_pid" 20
   for pid in ${bridge_pids[@]+"${bridge_pids[@]}"}; do
     terminate "$pid" 20
   done

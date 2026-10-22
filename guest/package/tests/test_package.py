@@ -102,9 +102,9 @@ class GraphicalBridges(unittest.TestCase):
         install = (PACKAGE / "try-omarchy.install").read_text()
         self.assertIn("omarchy-native-dictation-bridge.service", install[:install.index("post_install()")])
         post_upgrade = install[install.index("post_upgrade()"):]
-        self.assertIn('if [ "$(vercmp "$2" 0.1.0-31)" -lt 0 ]; then\n'
+        self.assertIn('if [ "$(vercmp "$2" 0.1.0-32)" -lt 0 ]; then\n'
                       '    systemctl --global preset omarchy-native-dictation-bridge.service', post_upgrade)
-        self.assertIn("pkgrel=31\n", (PACKAGE / "PKGBUILD").read_text())
+        self.assertIn("pkgrel=32\n", (PACKAGE / "PKGBUILD").read_text())
 
     def test_dictation_bridge_waits_for_its_port(self):
         unit = configparser.ConfigParser(interpolation=None, strict=False)
@@ -332,7 +332,8 @@ class MenuEntries(unittest.TestCase):
   "update.firmware": {"icon":"","label":"Firmware","action":"omarchy-launch-floating-terminal-with-presentation omarchy-update-firmware"},
   "update.hardware.wifi": {"icon":"\U000f16be","label":"Wi-Fi","action":"omarchy-launch-floating-terminal-with-presentation omarchy-restart-wifi"},
   "update.hardware.bluetooth": {"icon":"\U000f00af","label":"Bluetooth","action":"omarchy-launch-floating-terminal-with-presentation omarchy-restart-bluetooth"},
-  "trigger.appearance.top-bar.indicators.battery-percentage": {"icon":"\U000f0079","label":"Battery Percentage","when":"omarchy-hw-laptop","action":"omarchy-shell omarchy.power togglePercentage"},
+  "appearance.top-bar.indicators.battery-percentage-on": {"icon":"\U000f0079","label":"Show Battery Percentage","when":"omarchy-hw-laptop && [[ $(omarchy-bar get omarchy.power showPercentage) != true ]]","action":"omarchy-shell omarchy.power togglePercentage"},
+  "appearance.top-bar.indicators.battery-percentage-off": {"icon":"\U000f0079","label":"Hide Battery Percentage","when":"omarchy-hw-laptop && [[ $(omarchy-bar get omarchy.power showPercentage) == true ]]","action":"omarchy-shell omarchy.power togglePercentage"},
   "install.gaming.geforce-now": {"icon":"\U000f08b9","label":"NVIDIA GeForce NOW","disabled":"flatpak info com.nvidia.geforcenow","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-gaming-geforce-now"},
   "install.gaming.battlenet": {"icon":"","label":"Battle.net","disabled":"[[ -d $HOME/Games/battlenet ]]","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-gaming-battlenet"},
   "install.gaming.lutris": {"icon":"","label":"Lutris","disabled":"omarchy-pkg-present lutris","action":"omarchy-launch-floating-terminal-with-presentation omarchy-install-gaming-lutris"},
@@ -343,7 +344,8 @@ class MenuEntries(unittest.TestCase):
            "setup.import-previous-vm", "setup.default.dictation.apple-speech", "remove.dictation.apple-speech"}
     DICTATION = {"setup.default.dictation.apple-speech", "remove.dictation.apple-speech", "remove.dictation"}
     CHANGED = {"update.timezone", "setup.direct-boot", "update.firmware", "update.hardware.wifi",
-               "update.hardware.bluetooth", "trigger.appearance.top-bar.indicators.battery-percentage",
+               "update.hardware.bluetooth", "appearance.top-bar.indicators.battery-percentage-on",
+               "appearance.top-bar.indicators.battery-percentage-off",
                "install.gaming.geforce-now", "install.gaming.battlenet", "install.gaming.lutris",
                "remove.dictation"}
 
@@ -387,8 +389,9 @@ class MenuEntries(unittest.TestCase):
         self.assertEqual(parsed["update.firmware"]["when"], "! omarchy-hw-vm")
         self.assertEqual(parsed["install.gaming.lutris"]["when"], "omarchy-hw-x86")
         self.assertEqual(parsed["install.gaming.lutris"]["disabled"], "omarchy-pkg-present lutris")
-        self.assertEqual(parsed["trigger.appearance.top-bar.indicators.battery-percentage"]["when"],
-                         "(omarchy-hw-laptop) || compgen -G '/sys/class/power_supply/BAT*' >/dev/null")
+        self.assertEqual(parsed["appearance.top-bar.indicators.battery-percentage-on"]["when"],
+                         "(omarchy-hw-laptop || compgen -G '/sys/class/power_supply/BAT*' >/dev/null) && "
+                         "[[ $(omarchy-bar get omarchy.power showPercentage) != true ]]")
         # Removed rows stay removed.
         self.menu.write_text("{}\n")
         self.entries()
@@ -432,9 +435,20 @@ class MenuEntries(unittest.TestCase):
         parsed = self.parse(self.menu.read_text())
         self.assertEqual(parsed["update.firmware"]["label"], "Firmware")
         self.assertEqual(parsed["update.hardware.wifi"], {"when": "! omarchy-hw-vm", "label": "Mine"})
-        # Nothing re-added; only the newest release's row is new.
-        self.assertEqual(set(parsed), {"update.firmware", "update.hardware.wifi", "setup.import-previous-vm"}
+        # Nothing re-added; only rows of later releases are new.
+        self.assertEqual(set(parsed), {"update.firmware", "update.hardware.wifi", "setup.import-previous-vm",
+                                       "appearance.top-bar.indicators.battery-percentage-on",
+                                       "appearance.top-bar.indicators.battery-percentage-off"}
                          | self.DICTATION)
+
+    def test_dictation_rows_reach_menus_written_by_the_battery_release(self):
+        self.menu.parent.mkdir(parents=True)
+        self.menu.write_text("{\n}\n")
+        self.state.mkdir(parents=True)
+        (self.state / "menu-entries").write_text("8\n")
+        self.entries()
+        self.assertEqual(set(self.parse(self.menu.read_text())), self.DICTATION)
+        self.assertEqual((self.state / "menu-entries").read_text(), "9\n")
 
     def test_without_omarchys_menu_only_own_rows_are_added(self):
         self.omarchy.unlink()
