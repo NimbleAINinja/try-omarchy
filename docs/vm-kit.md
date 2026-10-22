@@ -1,6 +1,6 @@
 # The VM kit and run mode
 
-Another app can run the Omarchy VM without Try Omarchy's launcher window. Omarchy Installer does this for its trial ([installer trial plan](installer-trial.md)). It embeds three things from this repository's releases:
+Another app can run the Omarchy VM without Try Omarchy's launcher window. Omarchy Installer does this for its Try mode ([one app plan](one-app.md)). It embeds three things from this repository's releases:
 
 - **the kit:** `Try Omarchy Kit.app`, the full app without its bridged-networking daemon;
 - **the run mode:** `omarchy-vm-helper --run-vm`, the kit's helper with no window;

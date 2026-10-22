@@ -7,13 +7,14 @@ Try Omarchy runs stock Omarchy on an Apple Silicon Mac and bridges it to macOS. 
 1. **Don't modify Omarchy.** The guest is a stock `aarch64` Omarchy install. We never edit, fork, pin or replace Omarchy or its packages.
 2. **Do the minimum.** Change only what Omarchy needs to work well in a VM on a Mac. If a change would also make sense on real hardware, it belongs upstream.
 3. **Two places.** Everything inside the guest is one package, `try-omarchy`. Everything on the Mac is the app and its VM runtime.
-4. **Independent updates.**
+4. **Shells all the way down.** Try is a shell for Omarchy, and [Omarchy Installer](https://github.com/omacom/omarchy-mac-installer) is a shell for Try. This repository is the source of Try: the kit, the client that starts it and the guest package. The installer embeds and fetches the kit and adds nothing of its own to the VM, so Try updates without an installer release ([one app plan](docs/one-app.md)).
+5. **Independent updates.**
    - Omarchy updates itself, at any time.
    - The app updates from releases, and brings a newer `try-omarchy` package with it.
 
    No version may assume another one moved with it. The app and the package must work with each other's older and newer versions.
-5. **Follow Omarchy's channel.** The image uses `edge`, the only channel Omarchy publishes for ARM today. It moves to `stable` when Omarchy releases its Mac image there.
-6. **Fix upstream when you can.** Report bugs to Omarchy, its packages, QEMU or VirGL. Carry a local fix only until upstream has its own.
+6. **Follow Omarchy's channel.** The image uses `edge`, the only channel Omarchy publishes for ARM today. It moves to `stable` when Omarchy releases its Mac image there.
+7. **Fix upstream when you can.** Report bugs to Omarchy, its packages, QEMU or VirGL. Carry a local fix only until upstream has its own.
 
 ## Where things belong
 

@@ -11,6 +11,7 @@ The full version is in [CONTRIBUTING.md](CONTRIBUTING.md#principles).
 - **A shell, not a distribution.** The guest is stock Omarchy. We don't modify Omarchy or its packages.
 - **Do the minimum.** Change only what Omarchy needs to work well in a VM on a Mac. A fix that real hardware also needs belongs upstream.
 - **Two places.** Everything inside the guest is one package, `try-omarchy`. Everything on the Mac is the app and its VM runtime.
+- **Shells all the way down.** Try is a shell for Omarchy, and Omarchy Installer is a shell for Try. This repository is the source of Try, the kit the installer embeds and fetches; the installer adds nothing of its own to the VM.
 - **Independent updates.** Omarchy updates itself. The app updates separately, and brings a newer `try-omarchy` package with it. Each version of the app must work with older and newer versions of the package.
 - **Follow Omarchy's channel.** We use `edge` today and move to `stable` when Omarchy releases its Mac image there.
 

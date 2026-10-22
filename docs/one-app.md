@@ -1,0 +1,138 @@
+# One app plan
+
+Status: proposed on 2026-10-22. It replaces the installer trial plan of the same day, whose first part is built: this repository's [VM kit and run mode](vm-kit.md), and the installer's trial screens on top of them.
+
+## Summary
+
+[Omarchy Installer](https://github.com/omacom/omarchy-mac-installer) becomes the one app for Omarchy on a Mac. It has two modes, **Install** and **Try**. Install puts Omarchy on the Mac's own hardware. Try runs it in a virtual machine, in a window beside macOS.
+
+- On a Mac the installer supports, the first page offers both: **Install on this Mac** and **Try in a VM**.
+- On a Mac it cannot install on, and on a Mac with Omarchy already installed, the one app is Try. The reason is one line on the page, and whatever the installer can still do for that Mac stays in its menu.
+- Once a VM exists, the one app opens straight into Try and starts Omarchy. **Install on this Mac** moves to the menu and to the page while Omarchy runs.
+
+Shells all the way down: Try is a shell for Omarchy, and the installer is a shell for Try. This repository is the source of Try: the kit, the client that starts it, and the `try-omarchy` guest package. The installer embeds one kit and fetches newer ones, so Try updates without an installer release. Try Omarchy as its own download ends once the one app ships with the kit's settings ([retiring the full app](#retiring-the-full-app)).
+
+| | Install | Try |
+| --- | --- | --- |
+| For | Omarchy on the Mac's own hardware | Omarchy beside macOS, for an hour or for good |
+| Macs | The models the catalog enables, on macOS 15 or newer | Any Apple Silicon Mac on macOS 15 or newer |
+| Runs through | The pinned Asahi engine and the privileged helper | The kit's run mode |
+| Permissions | None | Accessibility, Microphone and Camera, all optional |
+| Settings | The size of Omarchy's partition | The kit's own, opened from inside Omarchy |
+
+## First launch
+
+1. The one app inspects the Mac, as the installer does today.
+2. A supported Mac sees the choice page: this Mac in a line, then **Install on this Mac** and **Try in a VM**. Install continues into the plan the installer shows today. Try opens the Try page.
+3. An unsupported Mac sees the Try page at once. The line under the Mac's name says why Omarchy cannot be installed on it, and **Check again** stays in the menu. A Mac that fails only the disk check gets the same page, because the VM needs free space, not a partition.
+4. A Mac with Omarchy already installed natively sees the Try page too, with the line saying Omarchy is installed. **Remove Omarchy…** stays in the Installation menu, as today.
+
+The Try page is the trial's Try screen as built: Accessibility, so Command works as Super, the microphone and the camera, all optional, the space the VM needs and the space free, and **Download and start**.
+
+## Try
+
+Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. While Omarchy runs, the page shows its state, **Shut Down** and, on a supported Mac, **Install on this Mac**. The page also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
+
+A VM in the default folder is the remembered choice. Every later launch:
+
+- skips the choice page and starts Omarchy at once, with the page showing its state;
+- still inspects the Mac in the background, so Install knows whether this Mac is supported;
+- offers **Install on this Mac…** in the Installation menu, beside **Remove Omarchy…**.
+
+**Delete Virtual Machine…** in the same menu removes the VM, after a confirmation that names the space it frees, and returns the one app to the first launch.
+
+Shut Down, quitting the app and closing the Omarchy window shut Omarchy down over QMP, wait up to a minute, and then stop QEMU, as today. The app shows **Shutting down** until the VM has exited and quits only then.
+
+### Settings
+
+The one app has no settings page of its own. Settings live in the kit: the launcher window Try Omarchy has today, with its sharing, network, virtual machine and storage sections. The run mode serves the settings bridge, so Omarchy's Setup menu keeps its settings row, and choosing it opens the kit's launcher window beside the Omarchy window, named after the one app. Changes apply at the next start, as in Try Omarchy.
+
+The run mode reads the same stored settings the launcher writes, so memory and CPUs, networking, port forwarding, the shared folder, USB devices and the storage folder all take effect in Try without the one app knowing them. The run-mode configuration keeps only what the app knows: the product name and the optional bridges.
+
+The settings move out of the app's preferences domain into a file in the VM's folder, where the startup choice already lives. Any kit then reads the same settings, whichever bundle it runs from and whichever kit version it is.
+
+## Install from Try
+
+**Install on this Mac**, from the running page or the menu, shuts Omarchy down and continues into the plan. On an unsupported Mac the menu item opens the reason instead, with **Check again**.
+
+The plan review counts the space the VM's folder actually uses against free space, as the trial does today. The native install leaves the VM in place. Whether the review offers to delete it first stays an [open question](#open-questions).
+
+## One VM
+
+The one app and Try Omarchy open the same VM, in the `Try Omarchy` folder under Application Support, with the same settings. The lock on the VM folder stops both from running it at once; the run mode reports `vm-already-open`, and the one app says that Omarchy is open in Try Omarchy. Either app can boot a VM the other made, and the `try-omarchy` package only upgrades ([integration updates](integration-updates.md)), so an older kit never downgrades the guest.
+
+The trial's **Open in Try Omarchy** handoff goes away: the one app always runs the VM itself.
+
+## One identity
+
+Everything in Try runs as the installer. The kit's binaries carry the installer's bundle identifier and name, are signed with the installer's identity and notarized with the installer, and macOS asks for Accessibility, Microphone and Camera in the installer's name and records the grants against it. The QEMU window's Dock name, icon and menus are the installer's too.
+
+Today the kit is a nested app bundle with its own identifier, `dev.tryomarchy.kit`, and the installer only re-signs its code. The kit becomes a set of helpers inside the installer's bundle instead, with no identity of its own, so the installer's build signs and notarizes it like its other helpers. A bundle identifier is what macOS files preferences, permission grants and Launch Services registration under, which is why the kit must not keep one.
+
+A kit the installer fetches cannot be signed as the installer. It is signed and notarized by this repository's release identity, and the installer accepts a kit whose signature chains to either team, this repository's or its own, with the hardened runtime and the kit's identifier. One team for both is the end state, and then the list shrinks to one. The grants still belong to the installer, because macOS attributes a helper's permissions to the app that started it, whoever signed the helper. The installer's Info.plist carries the usage descriptions for the camera and microphone.
+
+The kit has no permissions of its own, so the flattening above is for tidiness: one notarized unit, and no second name in the Dock or in System Settings. Permissions work the same as long as the installer starts the kit as a child process.
+
+## Fetching kits
+
+The installer embeds the kit it was built with, so Try works offline and on first launch. It also fetches newer kits from this repository's releases, so a fix to the VM reaches people without an installer release.
+
+- A release here publishes `TryOmarchyKit.zip`, its digest, and the image parts. The kit's version is the release's.
+- The installer checks for a newer kit when Try starts, no more than once a day, and downloads it to its own Application Support folder, following its rules for cellular and Low Data Mode connections. The next start of Try uses it. A download that fails leaves the current kit in use.
+- Before using a fetched kit the installer verifies its digest and its signature, and that its version is newer than the kit it has. It never runs a kit older than the embedded one, so a downgrade never reaches the guest.
+- A kit is signed by one team as a whole. The hardened runtime refuses libraries signed by another team, so the installer re-signs all of the embedded kit, as it does today, and a fetched kit is used as signed.
+- The installer downloads kits without the quarantine attribute, as it downloads its other assets, so Gatekeeper never asks anyone to approve a helper they never opened.
+- The run mode's configuration and events are versioned, so an installer works with the kits that come after it. A kit that needs a newer installer says so in its release, and the installer keeps the newest kit it understands.
+
+The kit's image parts and manifest stay on this repository's releases, which are never deleted, because an installer may still pin or hold an old kit.
+
+## Retiring the full app
+
+Once the one app ships with the kit's settings window, Try Omarchy's download ends. This repository then:
+
+- publishes the kit, the client and the image parts with each release, and no DMG;
+- keeps `make app` and `make e2e` as the way to develop and test Try on a Mac;
+- keeps the `Try Omarchy` folder under Application Support, so existing VMs and settings stay where they are;
+- moves what the manual says about Try to the one app's documentation, and keeps here what is about the VM itself.
+
+The one app's own updates are the installer's matter, outside this plan.
+
+## Work
+
+Done, on the installer trial branches:
+
+- This repository: the session shared by the full app and the run mode, the run mode, the client library, `make kit` and its release assets.
+- The installer: the embedded and signed kit, the Try screen, the running page, shutdown from every place, and the space line in the plan review.
+
+Next, in this repository:
+
+1. The settings bridge and the launcher window in the run mode, named after the product.
+2. Settings stored in the VM's folder, and the run mode reading them.
+3. The kit as helpers without a bundle identity, and the product name, icon and menus in the QEMU window.
+4. The kit signed and notarized by its release, with a version the installer can compare.
+5. The daemon registration for bridged networking under another identity.
+6. When the one app ships with settings: stop publishing the DMG, and move the manual.
+
+Next, in the installer:
+
+1. The choice page on a supported Mac, and the Try page as the only page on an unsupported Mac or one with Omarchy installed.
+2. The remembered choice: a VM in the default folder opens Try and starts Omarchy, with the inspection in the background.
+3. **Install on this Mac…** and **Delete Virtual Machine…** in the Installation menu, and the Allow rows on the running page.
+4. Drop the **Open in Try Omarchy** handoff; say which app holds the VM on `vm-already-open`.
+5. The kit built into the installer's bundle under its identity.
+6. Fetching, verifying and switching to newer kits.
+
+## Testing
+
+- This repository: `make test` keeps the client's contract tests against the run mode, and `make e2e` boots the app's VM through the run mode. The settings window in the run mode is checked by hand from Omarchy's Setup menu.
+- The installer: `TrialSessionTests` grow to cover the choice, the remembered choice, the menu items and the pages for an unsupported Mac and an installed one. The assembly test checks the kit's signature under the installer's identity. Kit fetching gets tests for the digest, signature and version checks against fixtures.
+- By hand on a Mac: the first launch on a supported Mac, an unsupported one and one with Omarchy installed; a second launch with a VM; Install on this Mac from the running page and the menu; the settings window from the Setup menu and a setting that applies at the next start; a fetched kit taking over at the next start; Delete Virtual Machine; and the lock error with Try Omarchy running.
+
+Neither repository's CI can boot the VM.
+
+## Open questions
+
+- Whether the one app keeps the name Omarchy Installer. It reads fine for both modes. The alternative is Omarchy, with the installer's identity kept.
+- Whether the plan review offers to delete the VM before a native install, since the install leaves 9 GB or more in Application Support that the person may not use again.
+- Whether a Touch ID enrollment made in Try Omarchy works in the one app. Both read keys from the same folder, and Secure Enclave keys are bound to the Mac, so it should. It needs a test.
+- Whether fetched kits should come through the installer's signed catalog instead of this repository's releases, once the catalog host exists.
