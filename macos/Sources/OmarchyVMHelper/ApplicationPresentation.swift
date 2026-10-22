@@ -178,11 +178,16 @@ enum ApplicationPresentation {
             keyEquivalent: ""
         )
 
+        application.mainMenu = mainMenu
+        application.servicesMenu = servicesMenu
+        application.windowsMenu = windowMenu
+        guard includesAppCommands else { return }
+
         let helpItem = NSMenuItem()
         mainMenu.addItem(helpItem)
         let helpMenu = NSMenu(title: "Help")
         helpItem.submenu = helpMenu
-        for link in includesAppCommands ? ApplicationHelpLink.allCases : [] {
+        for link in ApplicationHelpLink.allCases {
             let item = helpMenu.addItem(
                 withTitle: link == .usage ? "\(applicationName) Help" : link.title,
                 action: #selector(VMApplicationController.openHelpLink(_:)),
@@ -191,10 +196,6 @@ enum ApplicationPresentation {
             item.tag = link.rawValue
             item.target = actionsTarget
         }
-
-        application.mainMenu = mainMenu
-        application.servicesMenu = servicesMenu
-        application.windowsMenu = windowMenu
         application.helpMenu = helpMenu
     }
 }

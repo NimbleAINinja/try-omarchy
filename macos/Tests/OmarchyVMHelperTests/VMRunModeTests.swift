@@ -438,6 +438,20 @@ struct VMRunLaunchSettingsTests {
         #expect(error.code == .storageUnavailable)
     }
 
+    @Test func anUnreadableFolderChoiceNeverFallsBackToAnotherVM() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let configuration = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path)
+        let resolved = VMRunLaunchSettings.make(
+            baseEnvironment: [:], configuration: configuration, storageLocation: .default,
+            storageLocationProblem: "storage-location.json is not a private file.",
+            settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
+            bridgedNetworkAvailable: false, limits: limits, connectedUSBDevices: { [] },
+            homeDirectory: "/Users/nobody", metrics: nil, probe: Volume(), volumeRootDetector: NotVolumeRoot())
+        guard case .failure(let error) = resolved else { Issue.record("started without knowing the VM folder"); return }
+        #expect(error.code == .storageUnavailable)
+    }
+
     @Test func developmentOverridesStillWin() throws {
         let fixture = try LauncherSettingsFixture()
         try fixture.markWorkspace()

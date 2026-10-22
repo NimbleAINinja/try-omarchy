@@ -26,6 +26,7 @@ struct VMRunLaunchSettings {
         baseEnvironment: [String: String],
         configuration: VMRunConfiguration,
         storageLocation: StorageLocationPreference,
+        storageLocationProblem: String? = nil,
         settings: (URL) -> any LauncherSettingsStorage,
         bridgedNetworkAvailable: Bool,
         limits: VMResourceLimits = .current,
@@ -36,8 +37,11 @@ struct VMRunLaunchSettings {
         volumeRootDetector: VolumeRootDetecting = FileManagerVolumeRootDetector()
     ) -> Result<Self, VMRunError> {
         var environment = baseEnvironment
-        if environment[StorageLocationPolicy.environmentKey]?.isEmpty != false, storageLocation.isDefault,
-           let storageRoot = configuration.storageRoot {
+        let inheritsStateRoot = environment[StorageLocationPolicy.environmentKey]?.isEmpty == false
+        if !inheritsStateRoot, let storageLocationProblem {
+            return .failure(VMRunError(code: .storageUnavailable, message: storageLocationProblem))
+        }
+        if !inheritsStateRoot, storageLocation.isDefault, let storageRoot = configuration.storageRoot {
             environment[StorageLocationPolicy.environmentKey] = storageRoot
         }
         let storage = StorageLocationLaunchConfiguration.make(
@@ -121,8 +125,8 @@ struct VMRunLaunchSettings {
 }
 
 /// The launcher window, opened from Omarchy's Setup menu while another app
-/// runs the VM. It shows the same settings as the full app, named after that
-/// app, and changes apply at the next start.
+/// runs the VM, named after that app. Like the full app's settings while
+/// Omarchy runs, it is an accessory window: no second name in the Dock.
 @MainActor
 final class VMRunSettingsWindow {
     private let productName: String
@@ -145,9 +149,10 @@ final class VMRunSettingsWindow {
     }
 
     func show() -> Bool {
-        activationController.setDesiredPolicy(.regular)
+        activationController.setDesiredPolicy(ApplicationPresentation.runningActivationPolicy)
         if let startMenuWindow, startMenuWindow.window.isVisible || startMenuWindow.window.isMiniaturized {
             startMenuWindow.bringToFront()
+            NSApp.activate(ignoringOtherApps: true)
             return true
         }
         returnApplication = NSWorkspace.shared.frontmostApplication
@@ -209,7 +214,6 @@ final class VMRunSettingsWindow {
                 try? VMNetworkPreferenceStore(storage: settings).save(VMNetworkPreferences())
                 FullscreenPreferenceStore(storage: settings).save(.defaults)
                 VMResourcePreferenceStore(storage: settings).clear()
-                try? StartupPreferenceStore().save(false, storageRoot: stateRoot)
             },
             sharedFolderStatus: {
                 SharedFolderMenuState.make(preference: sharedFolderStore.load(), homeDirectory: homeDirectory)

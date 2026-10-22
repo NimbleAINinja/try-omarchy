@@ -18,7 +18,8 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
     private var shutdownRequested = false
     private var finished = false
     private let storageLocationStore = StorageLocationPreferenceStore(
-        storage: LauncherSettingsFile.storageLocation(legacy: nil)
+        storage: LauncherSettingsFile.storageLocation(legacy: LauncherSettingsFile.fullAppPreferences(),
+                                                      legacyIsWritable: false)
     )
     private var stateRoot: URL?
     private var settingsBridge: NativeSettingsBridge?
@@ -44,14 +45,14 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         session.observeHost()
         guard !shutdownRequested else { return finish(status: 0) }
         if let failure = VMRunClient.preflight() { return fail(failure) }
-        ApplicationPresentation.installMainMenu(in: NSApp, applicationName: configuration.productName,
-                                                includesAppCommands: false)
+        presentAsProduct()
         let settings: VMRunLaunchSettings
         switch VMRunLaunchSettings.make(
             baseEnvironment: launchEnvironment(),
             configuration: configuration,
             storageLocation: storageLocationStore.load(),
-            settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
+            storageLocationProblem: storageLocationStore.problem(),
+            settings: { [unowned self] root in self.vmSettings(root: root) },
             bridgedNetworkAvailable: Self.bundlesNetworkService(bundle),
             metrics: QEMUGPUStorageSpaceEstimate.bundledMetrics(bundle: bundle)
         ) {
@@ -125,7 +126,35 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         return environment
     }
 
-    /// Omarchy's Setup menu asks for settings over the settings port.
+    /// The person's settings from the full app move into the VM's file,
+    /// except into a scratch VM chosen by the environment.
+    private func vmSettings(root: URL) -> LauncherSettingsFile {
+        let inheritsStateRoot = baseEnvironment[StorageLocationPolicy.environmentKey]?.isEmpty == false
+        return LauncherSettingsFile.vmSettings(legacy: LauncherSettingsFile.fullAppPreferences(),
+                                               legacyIsWritable: false,
+                                               adoptsLegacy: { !inheritsStateRoot }) { root }
+    }
+
+    /// The process shows only the settings window and alerts, under the
+    /// product's name and icon, never the kit's.
+    private func presentAsProduct() {
+        ApplicationPresentation.installMainMenu(in: NSApp, applicationName: configuration.productName,
+                                                includesAppCommands: false)
+        if let iconPath = configuration.iconPath, let icon = NSImage(contentsOfFile: iconPath) {
+            NSApp.applicationIconImage = icon
+        }
+        let about = NSApp.mainMenu?.items.first?.submenu?.items
+            .first { $0.action == #selector(NSApplication.orderFrontStandardAboutPanel(_:)) }
+        about?.action = #selector(showAbout(_:))
+        about?.target = self
+    }
+
+    @objc private func showAbout(_ sender: Any?) {
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [.applicationName: configuration.productName]
+        options[.applicationIcon] = NSApp.applicationIconImage
+        NSApp.orderFrontStandardAboutPanel(options: options)
+    }
+
     private func startSettingsBridge(qmpSocketPath: String) {
         guard let stateRoot else { return }
         let socket = URL(fileURLWithPath: qmpSocketPath).deletingLastPathComponent()
@@ -138,7 +167,7 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
                         productName: self.configuration.productName,
                         stateRoot: stateRoot,
                         storageLocationStore: self.storageLocationStore,
-                        settings: LauncherSettingsFile.vmSettings(legacy: nil) { stateRoot },
+                        settings: self.vmSettings(root: stateRoot),
                         bundle: self.bundle
                     )
                 }
