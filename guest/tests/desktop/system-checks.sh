@@ -34,6 +34,21 @@ if grep -q 'finalize-user failed' /var/log/omarchy-provision-owner.log 2>/dev/nu
   grep -iE 'error|fail' /var/log/omarchy-provision-owner.log | tail -10 | sed 's/^/     /'
 fi
 [[ $(hostname) == omarchy-ci ]] && ok "host name from setup" || bad "host name is $(hostname), not omarchy-ci"
+# Setup kept its preselected Same as macOS (provision-seeded.sh), so the guest
+# follows the zone the host settings carry.
+mac_zone=""
+read -r -a host 2>/dev/null </run/try-omarchy/cmdline || true
+for token in ${host[@]+"${host[@]}"}; do
+  case $token in tryomarchy.timezone=*) mac_zone=${token#*=} ;; esac
+done
+if [[ -n $mac_zone ]]; then
+  policy=$(jq -r '"\(.mode) \(.zone)"' /var/lib/try-omarchy/timezone.json 2>/dev/null)
+  if [[ $policy == "auto $mac_zone" && $(readlink -f /etc/localtime) == "$(readlink -f "/usr/share/zoneinfo/$mac_zone")" ]]; then
+    ok "setup's Same as macOS follows the Mac's zone ($mac_zone)"
+  else
+    bad "setup did not follow the Mac's zone $mac_zone: policy '$policy', /etc/localtime $(readlink /etc/localtime)"
+  fi
+fi
 [[ -f /etc/sddm.conf.d/autologin.conf ]] && ok "the owner's autologin is kept (try-omarchy's drop-in)" ||
   bad "the owner's autologin was removed"
 
