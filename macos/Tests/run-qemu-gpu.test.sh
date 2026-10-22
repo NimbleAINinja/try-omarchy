@@ -203,10 +203,14 @@ assert_not_contains "$output" "usb-host"
 assert_contains "$output" "swap-opt-cmd=off,host-keys=131:144:145:160:176:177:178 "
 assert_not_contains "$output" "media-keys="
 
-# --- Caps Lock becomes Hangul only on a non-JIS Mac with a Korean input source --------
+# --- Caps Lock follows the Mac input source only on a non-JIS Mac with an input method --
 assert_contains "$output" "Caps Lock input: caps-lock"
 output=$(FAKE_KEYBOARD=ansi FAKE_CAPS_LOCK_INPUT=hangul launch)
 assert_contains "$output" "Caps Lock input: hangul"
+output=$(FAKE_KEYBOARD=ansi FAKE_CAPS_LOCK_INPUT=input-method launch)
+assert_contains "$output" "Caps Lock input: input-method"
+output=$(FAKE_CAPS_LOCK_INPUT=input-method launch)
+assert_contains "$output" "Caps Lock input: caps-lock"
 output=$(FAKE_KEYBOARD=iso FAKE_CAPS_LOCK_INPUT=hangul launch)
 assert_contains "$output" "Caps Lock input: hangul"
 output=$(FAKE_CAPS_LOCK_INPUT=hangul launch)
