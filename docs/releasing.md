@@ -55,12 +55,14 @@ After verifying the DMG, run:
 make publish
 ```
 
-It reads the version from the built app, checks that the DMG exists and that
+It reads the version from the built app, checks that the DMG and the kit exist,
+that the kit matches its recorded digest, and that
 the app's download manifest points at that tag's parts in `dist/factory/`, and
 pushes the tag first, so the release
 points at the commit that was built rather than one GitHub would create from
 the draft's target branch. It refuses if origin already has the tag on another
-commit. It then uploads the DMG and the factory parts to the draft release with
+commit. It then uploads the DMG, the kit (`TryOmarchyKit.zip` and its
+`.sha256`, see [the VM kit](vm-kit.md)) and the factory parts to the draft release with
 that tag, replacing earlier uploads; a draft named `vX.Y.Z` with no tag yet gets
 the tag selected. Without a draft it creates one. A published release is never
 changed. Review the draft on GitHub and publish it yourself: until then its
@@ -76,7 +78,8 @@ URL, size and SHA-256 digest. The URLs point at
 `https://github.com/omacom/try-omarchy/releases/download/vX.Y.Z/`, so the parts
 must be uploaded to the release with the same tag, under their generated names,
 before the release is published. A release without them cannot create a new
-VM; existing VMs are unaffected.
+VM; existing VMs are unaffected. Kits download from the same parts, so a
+release is never deleted while an installer may still pin its kit.
 
 Always upload the DMG as `TryOmarchy.dmg` so older app release checkers and the
 website's stable download link continue to work:

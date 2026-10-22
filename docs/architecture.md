@@ -34,6 +34,11 @@ of the factory disk and starts QEMU. QEMU's Cocoa input layer uses the shared
 Accessibility grant to capture system-wide Command chords and deliver Command
 as guest Super. Swift does not replace QEMU or run the Omarchy desktop itself.
 
+The launcher runs the VM through a session that the helper's headless run mode
+shares: the image download, the launch script, QMP readiness, Mac sleep and the
+exit. Another app embeds the same core as a kit and starts the run mode (see
+[the VM kit and run mode](vm-kit.md)).
+
 QEMU presents the hardware that Linux expects: CPUs, memory, storage, networking,
 graphics, audio, keyboard, and pointer devices. Because both the Mac and the
 guest are ARM64, Apple Hypervisor Framework runs the guest CPU instructions on
@@ -362,6 +367,8 @@ Back can restore it. Failures never fall back to permanent removal.
 - `macos/` builds the Swift launcher, a patched QEMU runtime, and stages the
   edk2 firmware. The runtime is isolated, relocated, and signed before it
   enters the app bundle.
+- `make kit` derives the kit other apps embed from a production app, in
+  `dist/kit.noindex/`.
 - `dist/` is the only public output directory. It is generated and ignored by
   Git.
 

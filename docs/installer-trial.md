@@ -1,6 +1,6 @@
 # Installer trial plan
 
-Status: proposed on 2026-10-22, reviewed the same day. Nothing here is built yet.
+Status: proposed on 2026-10-22, reviewed the same day. This repository's part is built; see [the VM kit and run mode](vm-kit.md). The installer's part is in progress in its repository.
 
 ## Summary
 
@@ -67,7 +67,7 @@ The kit's image parts and manifest live on this repository's GitHub releases. In
 
 In this repository:
 
-1. Move VM supervision out of the full app's launcher into the helper's run mode, and have the full app use it. What moves: the factory download, the storage folder checks, cloning and growing the disk, starting QEMU and its bridges, QMP readiness, pausing and resuming for Mac sleep, handling a volume unmount, and reporting exit. What stays in the full app: the start menu and its settings, the settings bridge window, moving and deleting VMs, the Accessibility prompt and the release checker. The bridges already run as separate helper processes started by the launch script, and do not change.
+1. Move VM supervision out of the full app's launcher into a session that the helper's run mode shares, and have the full app use it. What moves: the factory download, the storage folder checks, cloning and growing the disk, starting QEMU and its bridges, QMP readiness, pausing and resuming for Mac sleep, handling a volume unmount, and reporting exit. What stays in the full app: the start menu and its settings, the settings bridge window, moving and deleting VMs, the Accessibility prompt and the release checker. The bridges already run as separate helper processes started by the launch script, and do not change.
 2. Add the client library as a Swift package product.
 3. Add `make kit`, and publish the kit and its digest with each release.
 
@@ -79,7 +79,7 @@ In the installer:
 
 ## Testing
 
-- In this repository, `make test` gains contract tests for the client library against the run mode's events and error codes, and `make e2e` runs the full app through the run mode.
+- In this repository, `make test` gains contract tests for the client library against the run mode's events and error codes, and `make e2e` boots the app's VM through the run mode.
 - The installer checks the embedded kit's digest and signature in its assembly test, and runs the launcher's inspect-only self-check against it.
 - The trial itself is checked by hand on a Mac: first start with and without each permission, shut down from each of the three places, the lock error with the full app running, and a second start.
 

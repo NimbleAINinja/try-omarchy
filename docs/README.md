@@ -28,3 +28,4 @@ How Try Omarchy works, for contributors. User guides are in the [manual](../manu
 - [Releasing](releasing.md)
 - [Shell plan](shell-plan.md): the design record behind the move to stock Omarchy
 - [Installer trial plan](installer-trial.md): running the VM from Omarchy Installer, on a core shared with the full app
+- [The VM kit and run mode](vm-kit.md): how another app embeds and runs the VM

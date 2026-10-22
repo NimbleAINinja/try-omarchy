@@ -15,7 +15,8 @@ make runtime   # macos/.build/qemu-gpu-runtime
 make firmware  # macos/.build/firmware (edk2-aarch64-code.fd and its license)
 make app       # dist/app.noindex/Try Omarchy.app
 make run
-make package   # signed and notarized dist/TryOmarchy.dmg
+make package   # signed and notarized dist/TryOmarchy.dmg and the kit
+make kit       # dist/kit.noindex/TryOmarchyKit.zip, ad-hoc signed (docs/vm-kit.md)
 make release   # prompt for version, tag, and build a signed/notarized DMG
 make release VERSION=vX.Y.Z  # explicit version without prompting
 make test
