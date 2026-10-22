@@ -193,10 +193,14 @@ struct LauncherSettingsFileTests {
     @Test("a VM chosen by the environment never takes the person's settings")
     func scratchVMsDoNotAdopt() throws {
         let fixture = try LauncherSettingsFixture()
-        try fixture.markWorkspace()
         let network = VMNetworkPreferences(mode: .bridged, interface: "en1")
         try VMNetworkPreferenceStore(defaults: fixture.legacy).save(network)
         let scratch = fixture.vmSettings(adopts: false)
+        #expect(VMNetworkPreferenceStore(storage: scratch).load() == VMNetworkPreferences())
+        FullscreenPreferenceStore(storage: scratch).save(FullscreenPreferences(isImmersive: false))
+        #expect(fixture.legacy.data(forKey: FullscreenPreferenceStore.key) == nil)
+
+        try fixture.markWorkspace()
         #expect(VMNetworkPreferenceStore(storage: scratch).load() == VMNetworkPreferences())
         FullscreenPreferenceStore(storage: scratch).save(.defaults)
         #expect(fixture.legacy.data(forKey: VMNetworkPreferenceStore.key) != nil)

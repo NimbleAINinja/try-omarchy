@@ -107,7 +107,9 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
     }
 
     func settingData(forKey key: String) -> Data? {
-        guard let folder = readyFolder(creating: hasLegacySettings) else { return legacy?.data(forKey: key) }
+        guard let folder = readyFolder(creating: hasLegacySettings) else {
+            return adoptsLegacy() ? legacy?.data(forKey: key) : nil
+        }
         if hasLegacySettings { try? withLock(folder) { try adoptLegacySettings(in: folder) } }
         guard case .settings(_, let settings)? = try? contents(in: folder), let value = settings[key],
               !(value is NSNull) else { return nil }
@@ -153,7 +155,7 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
 
     private func update(key: String, value: Any) {
         guard let folder = readyFolder(creating: true) else {
-            guard let legacy, legacyIsWritable else {
+            guard let legacy, legacyIsWritable, adoptsLegacy() else {
                 fputs("[settings] The settings folder is unavailable; \(key) was not saved.\n", stderr)
                 return
             }
