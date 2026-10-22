@@ -69,20 +69,44 @@ public enum TryOmarchyStorage {
         return values?.volumeAvailableCapacityForImportantUsage
     }
 
-    /// The space the folder takes on disk. Sparse VM disks count only the
-    /// blocks they use.
+    /// The space the folder takes on disk, which deleting it frees. Sparse VM
+    /// disks count only the blocks they use. The VM's disk is an APFS clone of
+    /// the factory image, so blocks they share count once: each file's private
+    /// blocks, plus the largest set of blocks one file shares.
     public static func allocatedBytes(at root: URL, fileManager: FileManager = .default) -> Int64 {
         let keys: [URLResourceKey] = [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
         guard let entries = fileManager.enumerator(at: root, includingPropertiesForKeys: keys,
                                                    options: [], errorHandler: { _, _ in true })
         else { return 0 }
-        var total: Int64 = 0
+        var privateTotal: Int64 = 0
+        var largestShared: Int64 = 0
         for case let url as URL in entries {
             guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
                   let bytes = values.totalFileAllocatedSize ?? values.fileAllocatedSize else { continue }
-            total += Int64(bytes)
+            let allocated = Int64(bytes)
+            let unshared = privateBytes(at: url).map { min(max($0, 0), allocated) } ?? allocated
+            privateTotal += unshared
+            largestShared = max(largestShared, allocated - unshared)
         }
-        return total
+        return privateTotal + largestShared
+    }
+
+    /// The bytes of a file that no APFS clone shares, or nil where the volume
+    /// cannot tell.
+    static func privateBytes(at url: URL) -> Int64? {
+        var request = attrlist()
+        request.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
+        request.commonattr = attrgroup_t(ATTR_CMN_RETURNED_ATTRS)
+        request.forkattr = attrgroup_t(ATTR_CMNEXT_PRIVATESIZE)
+        var reply = [UInt8](repeating: 0, count: 64)
+        let options = UInt32(FSOPT_ATTR_CMN_EXTENDED | FSOPT_NOFOLLOW)
+        guard getattrlist(url.path, &request, &reply, reply.count, options) == 0 else { return nil }
+        return reply.withUnsafeBytes { buffer -> Int64? in
+            let returned = buffer.loadUnaligned(fromByteOffset: MemoryLayout<UInt32>.size, as: attribute_set_t.self)
+            guard returned.forkattr & attrgroup_t(ATTR_CMNEXT_PRIVATESIZE) != 0 else { return nil }
+            return buffer.loadUnaligned(fromByteOffset: MemoryLayout<UInt32>.size + MemoryLayout<attribute_set_t>.size,
+                                        as: Int64.self)
+        }
     }
 }
 
