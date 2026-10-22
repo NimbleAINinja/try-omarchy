@@ -121,6 +121,7 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         environment = LanguageLaunchConfiguration.make(baseEnvironment: environment).environment
         environment[VMRunBridges.environmentKey] = VMRunBridges.names(configuration.bridges)
         environment[ProductName.environmentKey] = configuration.productName
+        environment[ProductName.iconEnvironmentKey] = configuration.iconPath
         return environment
     }
 

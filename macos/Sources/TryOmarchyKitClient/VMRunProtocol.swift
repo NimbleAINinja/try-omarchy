@@ -25,8 +25,12 @@ public enum VMRunNetwork: String, Codable, Sendable {
 /// win: the storage folder, memory, CPUs and network here apply only where
 /// the launcher stored nothing (docs/vm-kit.md).
 public struct VMRunConfiguration: Equatable, Sendable {
-    /// Names the app in messages and the Touch ID prompt.
+    /// Names the app in messages, the Touch ID prompt, and the Omarchy
+    /// window's Dock entry and menus.
     public var productName: String
+    /// The Omarchy window's Dock icon: an existing .icns or .png file. Nil is
+    /// the kit's own icon.
+    public var iconPath: String?
     /// The VM's storage folder when none was chosen in the settings. Nil is
     /// the full app's default folder.
     public var storageRoot: String?
@@ -39,6 +43,7 @@ public struct VMRunConfiguration: Equatable, Sendable {
 
     public init(
         productName: String,
+        iconPath: String? = nil,
         storageRoot: String? = nil,
         bridges: [VMRunBridge] = VMRunBridge.allCases,
         memoryMiB: Int? = nil,
@@ -46,6 +51,7 @@ public struct VMRunConfiguration: Equatable, Sendable {
         network: VMRunNetwork = .shared
     ) {
         self.productName = productName
+        self.iconPath = iconPath
         self.storageRoot = storageRoot
         self.bridges = bridges
         self.memoryMiB = memoryMiB
@@ -61,6 +67,7 @@ public struct VMRunConfiguration: Equatable, Sendable {
             "bridges": bridges.map(\.rawValue),
             "network": network.rawValue,
         ]
+        if let iconPath { object["iconPath"] = iconPath }
         if let storageRoot { object["storageRoot"] = storageRoot }
         if let memoryMiB { object["memoryMiB"] = memoryMiB }
         if let cpus { object["cpus"] = cpus }
@@ -69,7 +76,7 @@ public struct VMRunConfiguration: Equatable, Sendable {
 
     public static func decode(line: Data) throws -> Self {
         let object = try VMRunLine.decode(line)
-        let allowed: Set = ["version", "productName", "storageRoot", "bridges", "memoryMiB", "cpus", "network"]
+        let allowed: Set = ["version", "productName", "iconPath", "storageRoot", "bridges", "memoryMiB", "cpus", "network"]
         guard Set(object.keys).isSubset(of: allowed),
               VMRunLine.integer(object["version"]) == VMRunProtocol.version,
               let productName = object["productName"] as? String,
@@ -85,6 +92,10 @@ public struct VMRunConfiguration: Equatable, Sendable {
             bridges.append(bridge)
         }
         var configuration = Self(productName: productName, bridges: bridges, network: network)
+        if let value = object["iconPath"] {
+            guard let path = value as? String else { throw VMRunProtocolError.invalidConfiguration }
+            configuration.iconPath = path
+        }
         if let value = object["storageRoot"] {
             guard let root = value as? String else { throw VMRunProtocolError.invalidConfiguration }
             configuration.storageRoot = root
@@ -110,6 +121,14 @@ public struct VMRunConfiguration: Equatable, Sendable {
         if let storageRoot {
             guard storageRoot.hasPrefix("/"), storageRoot.count <= 1_024,
                   !storageRoot.contains("\n"), !storageRoot.contains("\r")
+            else { throw VMRunProtocolError.invalidConfiguration }
+        }
+        if let iconPath {
+            var information = stat()
+            guard iconPath.hasPrefix("/"), iconPath.utf8.count <= 1_024,
+                  iconPath.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
+                  ["icns", "png"].contains(URL(fileURLWithPath: iconPath).pathExtension.lowercased()),
+                  stat(iconPath, &information) == 0, information.st_mode & S_IFMT == S_IFREG
             else { throw VMRunProtocolError.invalidConfiguration }
         }
         if let memoryMiB, !(2_048...1_048_576).contains(memoryMiB) { throw VMRunProtocolError.invalidConfiguration }

@@ -1,9 +1,13 @@
 import Foundation
 
 /// The app a person sees running the VM: Try Omarchy, or the app that embeds
-/// its kit. The run mode passes it to the launcher and the bridges.
+/// its kit. The run mode passes it to the launcher and the bridges, and the
+/// launcher names the Omarchy window, its Dock entry and its menus after it.
 enum ProductName {
     static let environmentKey = "OMARCHY_PRODUCT_NAME"
+    /// The Omarchy window's Dock icon. The launcher uses the kit's own icon
+    /// when it is absent.
+    static let iconEnvironmentKey = "OMARCHY_PRODUCT_ICON"
     static let defaultName = "Try Omarchy"
 
     static var current: String {

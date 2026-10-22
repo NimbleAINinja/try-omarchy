@@ -56,13 +56,13 @@ make publish
 ```
 
 It reads the version from the built app, checks that the DMG and the kit exist,
-that the kit matches its recorded digest, and that
-the app's download manifest points at that tag's parts in `dist/factory/`, and
+that the kit matches its recorded digest, that the kit's manifest names the
+tag, and that the app's download manifest points at that tag's parts in `dist/factory/`, and
 pushes the tag first, so the release
 points at the commit that was built rather than one GitHub would create from
 the draft's target branch. It refuses if origin already has the tag on another
-commit. It then uploads the DMG, the kit (`TryOmarchyKit.zip` and its
-`.sha256`, see [the VM kit](vm-kit.md)) and the factory parts to the draft release with
+commit. It then uploads the DMG, the kit (`TryOmarchyKit.zip`, its
+`.sha256` and its manifest `TryOmarchyKit.json`, see [the VM kit](vm-kit.md)) and the factory parts to the draft release with
 that tag, replacing earlier uploads; a draft named `vX.Y.Z` with no tag yet gets
 the tag selected. Without a draft it creates one. A published release is never
 changed. Review the draft on GitHub and publish it yourself: until then its

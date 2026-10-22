@@ -47,7 +47,7 @@ class PublishTests(unittest.TestCase):
         self.root = base / "checkout"
         self.origin = base / "origin.git"
         (self.root / "scripts").mkdir(parents=True)
-        for name in ("publish.py", "release.py", "app_version.py"):
+        for name in ("publish.py", "release.py", "app_version.py", "kit_manifest.py"):
             shutil.copy2(REPOSITORY / "scripts" / name, self.root / "scripts" / name)
         (self.root / ".gitignore").write_text("/dist/\n/scripts/__pycache__/\n")
         subprocess.run(["git", "init", "-q", "--bare", str(self.origin)], check=True)
@@ -86,6 +86,11 @@ class PublishTests(unittest.TestCase):
         (dist / "kit.noindex/TryOmarchyKit.zip").write_text("kit")
         digest = hashlib.sha256(b"kit").hexdigest()
         (dist / "kit.noindex/TryOmarchyKit.zip.sha256").write_text(f"{digest}  TryOmarchyKit.zip\n")
+        manifest = json.dumps({"format": 1, "version": tag, "runProtocolVersion": 1,
+                               "buildDate": "2026-10-23T12:00:00Z"})
+        (dist / "kit.noindex/Try Omarchy Kit.app/Contents/Resources").mkdir(parents=True, exist_ok=True)
+        (dist / "kit.noindex/Try Omarchy Kit.app/Contents/Resources/kit.json").write_text(manifest)
+        (dist / "kit.noindex/TryOmarchyKit.json").write_text(manifest)
 
     def set_releases(self, releases: list[dict]) -> None:
         self.state.write_text(json.dumps({"releases": releases, "calls": []}))
@@ -105,6 +110,7 @@ class PublishTests(unittest.TestCase):
     def assets(self) -> list[str]:
         return [str(self.root / "dist/TryOmarchy.dmg"), str(self.root / "dist/kit.noindex/TryOmarchyKit.zip"),
                 str(self.root / "dist/kit.noindex/TryOmarchyKit.zip.sha256"),
+                str(self.root / "dist/kit.noindex/TryOmarchyKit.json"),
                 str(self.root / "dist/factory/omarchy-aarch64-edge.img.zst.001")]
 
     def test_pushes_the_tag_then_creates_a_draft_with_the_assets(self) -> None:
