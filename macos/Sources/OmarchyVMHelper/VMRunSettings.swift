@@ -124,12 +124,25 @@ struct VMRunLaunchSettings {
     }
 }
 
+extension VMRunLaunchSettings {
+    /// What the settings window shows, and so what a save keeps: the stored
+    /// resources, or else the configuration's that the VM started with.
+    static func shownResources(stored: VMResources?, configuration: VMRunConfiguration,
+                               limits: VMResourceLimits) -> VMResources {
+        if let stored { return limits.resolve(stored) }
+        var resources = limits.defaults
+        if let cpus = configuration.cpus { resources.cpuCount = cpus }
+        if let memory = configuration.memoryMiB { resources.memoryGiB = memory / 1024 }
+        return resources
+    }
+}
+
 /// The launcher window, opened from Omarchy's Setup menu while another app
 /// runs the VM, named after that app. Like the full app's settings while
 /// Omarchy runs, it is an accessory window: no second name in the Dock.
 @MainActor
 final class VMRunSettingsWindow {
-    private let productName: String
+    private let configuration: VMRunConfiguration
     private let stateRoot: URL
     private let storageLocationStore: StorageLocationPreferenceStore
     private let settings: LauncherSettingsFile
@@ -138,9 +151,9 @@ final class VMRunSettingsWindow {
     private var startMenuWindow: StartMenuWindow?
     private var returnApplication: NSRunningApplication?
 
-    init(productName: String, stateRoot: URL, storageLocationStore: StorageLocationPreferenceStore,
+    init(configuration: VMRunConfiguration, stateRoot: URL, storageLocationStore: StorageLocationPreferenceStore,
          settings: LauncherSettingsFile, bundle: Bundle) {
-        self.productName = productName
+        self.configuration = configuration
         self.stateRoot = stateRoot
         self.storageLocationStore = storageLocationStore
         self.settings = settings
@@ -243,8 +256,9 @@ final class VMRunSettingsWindow {
             savePortForwarding: { mappings in
                 do { try portForwardingStore.save(mappings); return nil } catch { return error.localizedDescription }
             },
-            resources: {
-                var resources = limits.resolve(resourceStore.load())
+            resources: { [configuration] in
+                var resources = VMRunLaunchSettings.shownResources(stored: resourceStore.load(),
+                                                                   configuration: configuration, limits: limits)
                 resources.diskGiB = resources.diskGiB.map { max($0, Self.minimumDiskGiB(stateRoot: stateRoot)) }
                 return resources
             },
@@ -273,7 +287,7 @@ final class VMRunSettingsWindow {
                 preferences.usesNotch = usesNotch
                 fullscreenStore.save(preferences)
             },
-            productName: productName,
+            productName: configuration.productName,
             runsInAnotherApp: true,
             firstBootCompleted: { true },
             launch: {}

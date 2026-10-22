@@ -164,7 +164,7 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
                 guard let self, !self.shutdownRequested, !self.finished else { return false }
                 if self.settingsWindow == nil {
                     self.settingsWindow = VMRunSettingsWindow(
-                        productName: self.configuration.productName,
+                        configuration: self.configuration,
                         stateRoot: stateRoot,
                         storageLocationStore: self.storageLocationStore,
                         settings: self.vmSettings(root: stateRoot),

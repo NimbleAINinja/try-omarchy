@@ -255,6 +255,37 @@ struct VMRunClientTests {
         #expect(recorder.wait() == [.progress(.downloading, percent: 10), .ready, .stopping, .exited(status: 0)])
     }
 
+    @Test func startsAgainFromTheExitedEvent() throws {
+        let (kit, root) = try fakeKit(helper: """
+            #!/bin/bash
+            read -r config
+            echo '{"version":1,"event":"ready"}'
+            echo '{"version":1,"event":"exited","status":0}'
+            sleep 0.3
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = VMRunClient(kit: kit)
+        let first = Recorder()
+        let second = Recorder()
+        let restart = Recorder()
+        first.onEvent = { event in
+            guard case .exited = event else { return }
+            if client.isRunning { restart.record(.error(VMRunError(code: .launchFailed, message: "still running"))) }
+            do {
+                try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) {
+                    second.record($0)
+                }
+            } catch {
+                restart.record(.error(VMRunError(code: .launchFailed, message: "\(error)")))
+            }
+            restart.record(.exited(status: 0))
+        }
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { first.record($0) }
+        #expect(first.wait() == [.ready, .exited(status: 0)])
+        #expect(restart.wait() == [.exited(status: 0)])
+        #expect(second.wait() == [.ready, .exited(status: 0)])
+    }
+
     @Test func reportsAnExitWithoutTheLastEvent() throws {
         let (kit, root) = try fakeKit(helper: "#!/bin/bash\nread -r config\nexit 3\n")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -456,6 +487,17 @@ struct VMRunLaunchSettingsTests {
         #expect(error.code == .storageUnavailable)
     }
 
+    @Test func theWindowShowsTheResourcesTheVMStartedWith() throws {
+        let configured = VMRunConfiguration(productName: "Omarchy Installer", memoryMiB: 4_096, cpus: 4)
+        let shown = VMRunLaunchSettings.shownResources(stored: nil, configuration: configured, limits: limits)
+        #expect(shown.cpuCount == 4)
+        #expect(shown.memoryGiB == 4)
+        let stored = VMResources(cpuCount: 6, memoryGiB: 8, diskGiB: 96)
+        #expect(VMRunLaunchSettings.shownResources(stored: stored, configuration: configured, limits: limits) == stored)
+        #expect(VMRunLaunchSettings.shownResources(stored: nil, configuration: VMRunConfiguration(productName: "x"),
+                                                   limits: limits) == limits.defaults)
+    }
+
     @Test func anUnreadableFolderChoiceNeverFallsBackToAnotherVM() throws {
         let fixture = try LauncherSettingsFixture()
         try fixture.markWorkspace()
@@ -487,5 +529,21 @@ struct VMRunLaunchSettingsTests {
     @Test func theSettingsBridgeAlwaysRuns() {
         #expect(VMRunBridges.names([]) == "settings")
         #expect(VMRunBridges.names([.clipboard, .timezone]) == "clipboard timezone settings")
+    }
+}
+
+struct VMRunSessionDownloadTests {
+    @MainActor @Test func aCancelledDownloadNeverStartsTheVM() {
+        let image = URL(fileURLWithPath: "/tmp/factory.img.zst")
+        guard case .launch(image) = VMRunSession.downloadOutcome(.success(image), cancelled: false) else {
+            Issue.record("a finished download did not start the VM"); return
+        }
+        guard case .cancelled = VMRunSession.downloadOutcome(.success(image), cancelled: true) else {
+            Issue.record("a download cancelled as it finished still started the VM"); return
+        }
+        guard case .cancelled = VMRunSession.downloadOutcome(.failure(FactoryDownloadError.cancelled), cancelled: true)
+        else { Issue.record("a cancelled download was reported as a failure"); return }
+        guard case .failed = VMRunSession.downloadOutcome(.failure(FactoryDownloadError.damaged), cancelled: false)
+        else { Issue.record("a failed download was not reported"); return }
     }
 }
