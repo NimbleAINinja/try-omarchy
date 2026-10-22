@@ -238,9 +238,7 @@ bridge_enabled() { [[ " $enabled_bridges " == *" $1 "* ]]; }
 
 # --- product -----------------------------------------------------------------
 # QEMU owns the Omarchy window, so its Dock entry, icon and menus name the app
-# that runs the VM: Try Omarchy, or the app that embeds the kit. The Dock names
-# a process after the file it was started from, so QEMU starts through a link
-# with the product's name; the signed binary stays where it is.
+# that runs the VM: Try Omarchy, or the app that embeds the kit.
 product_name=${OMARCHY_PRODUCT_NAME:-Try Omarchy}
 [[ ${#product_name} -le 1024 && $product_name != *[[:cntrl:]]* && $product_name =~ ^[^[:space:]](.*[^[:space:]])?$ ]] ||
   fail "OMARCHY_PRODUCT_NAME must be a single-line name without surrounding spaces"
@@ -585,14 +583,27 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# A name that cannot be a file name starts QEMU under the binary's own name.
+# The Dock names a process without an app bundle after its resolved file, so
+# QEMU starts from a bundle named after the product whose executable links to
+# the signed binary. The binary keeps its path, so the bridges still recognise
+# it. A name that cannot be a file name starts QEMU under the binary's own name.
+make_product_app() { # app
+  local plist="$1/Contents/Info.plist"
+  mkdir -p "$1/Contents/MacOS" &&
+    ln -s "$qemu_bin" "$1/Contents/MacOS/$product_name" &&
+    /usr/bin/plutil -create xml1 "$plist" &&
+    /usr/bin/plutil -insert CFBundleExecutable -string "$product_name" "$plist" &&
+    /usr/bin/plutil -insert CFBundleName -string "$product_name" "$plist" &&
+    /usr/bin/plutil -insert CFBundleDisplayName -string "$product_name" "$plist" &&
+    /usr/bin/plutil -insert CFBundlePackageType -string APPL "$plist"
+}
 qemu_exec=$qemu_bin
 case $product_name in
   "${qemu_bin##*/}" | */* | . | ..) ;;
   *)
-    if (($(printf '%s' "$product_name" | wc -c) <= 255)) && mkdir "$work_dir/product" 2>/dev/null &&
-      ln -s "$qemu_bin" "$work_dir/product/$product_name" 2>/dev/null; then
-      qemu_exec="$work_dir/product/$product_name"
+    product_app="$work_dir/product/$product_name.app"
+    if (($(printf '%s' "$product_name" | wc -c) <= 251)) && make_product_app "$product_app" 2>/dev/null; then
+      qemu_exec="$product_app/Contents/MacOS/$product_name"
     fi
     ;;
 esac
