@@ -51,6 +51,7 @@ final class VMRunSession {
     var onEvent: (Event) -> Void = { _ in }
 
     private var factoryDownloader: FactoryImageDownloader?
+    private var downloadCancelled = false
     /// Where this launch's downloaded image lives, cleaned once the VM runs.
     private var launchedFactoryDirectories: [URL] = []
     private var activeStateRoot: String?
@@ -97,6 +98,7 @@ final class VMRunSession {
         beforeLaunch: @escaping (LaunchContext) throws -> Void = { _ in }
     ) {
         guard !isRunning, factoryDownloader == nil else { return }
+        downloadCancelled = false
         hostSleepCoordinator.cancelWakeRetry()
         reachedStart = false
         pendingHostSleepControlFailure = nil
@@ -114,7 +116,25 @@ final class VMRunSession {
 
     /// What was downloaded stays for the next launch to resume.
     func cancelDownload() {
-        factoryDownloader?.cancel()
+        guard let factoryDownloader else { return }
+        downloadCancelled = true
+        factoryDownloader.cancel()
+    }
+
+    enum DownloadOutcome {
+        case launch(URL)
+        case cancelled
+        case failed(Error)
+    }
+
+    /// A download can finish just before a cancellation reaches it; the VM
+    /// must not start after someone asked it to stop.
+    static func downloadOutcome(_ result: Result<URL, Error>, cancelled: Bool) -> DownloadOutcome {
+        switch result {
+        case .success(let image): cancelled ? .cancelled : .launch(image)
+        case .failure(FactoryDownloadError.cancelled): .cancelled
+        case .failure(let error): .failed(error)
+        }
     }
 
     func requestSettingsAction(_ action: VMRunLifecycle.SettingsAction) {
@@ -199,13 +219,13 @@ final class VMRunSession {
             DispatchQueue.main.async {
                 guard let self, self.factoryDownloader === downloader else { return }
                 self.factoryDownloader = nil
-                switch result {
-                case .success(let image):
+                switch Self.downloadOutcome(result, cancelled: self.downloadCancelled) {
+                case .launch(let image):
                     self.onEvent(.downloadFinished)
                     launch(image)
-                case .failure(FactoryDownloadError.cancelled):
+                case .cancelled:
                     self.onEvent(.downloadCancelled)
-                case .failure(let error):
+                case .failed(let error):
                     self.onEvent(.launchFailed(error))
                 }
             }
