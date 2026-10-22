@@ -63,6 +63,10 @@ class CocoaProductIdentityTests(unittest.TestCase):
         self.assertIn("[[NSProcessInfo processInfo] setProcessName:cocoa_product_name()];\n"
                       "    [QemuApplication sharedApplication];\n    cocoa_set_product_icon();", text)
         self.assertEqual(text.count("Try Omarchy"), 1)
+        self.assertNotIn("%s", text)
+        self.assertEqual(text.count("qemu_name"), 2)
+        self.assertIn('setTitle:[NSString stringWithFormat:@"%@ - (Press  "', text)
+        self.assertEqual(text.count("setTitle:cocoa_product_name()]"), 2)
         self.assertIn('-name "guest=${product_name//,/,,}"', LAUNCHER.read_text(encoding="utf-8"))
         self.assertIn("export TRYOMARCHY_PRODUCT_ICON", LAUNCHER.read_text(encoding="utf-8"))
 
@@ -120,7 +124,7 @@ int main(int argc, char **argv)
             link.symlink_to(binary)
             environment = {key: value for key, value in os.environ.items() if key != "TRYOMARCHY_PRODUCT_ICON"}
 
-            def run(executable: Path, *arguments: str, icon_path: str | None = None) -> str:
+            def run(executable: Path, *arguments: str | bytes, icon_path: str | None = None) -> str:
                 env = dict(environment)
                 if icon_path is not None:
                     env["TRYOMARCHY_PRODUCT_ICON"] = icon_path
@@ -129,6 +133,8 @@ int main(int argc, char **argv)
 
             self.assertEqual(run(binary), "Try Omarchy|16x16")
             self.assertEqual(run(binary, ""), "Try Omarchy|16x16")
+            self.assertEqual(run(binary, b"Omarchy \xff"), "Try Omarchy|16x16")
+            self.assertEqual(run(binary, "Omarchy Ünïcode 日本"), "Omarchy Ünïcode 日本|16x16")
             self.assertEqual(run(link, "Omarchy Installer"), "Omarchy Installer|16x16")
             self.assertEqual(run(link, "Omarchy Installer", icon_path=str(installer_icon)),
                              "Omarchy Installer|24x12")
