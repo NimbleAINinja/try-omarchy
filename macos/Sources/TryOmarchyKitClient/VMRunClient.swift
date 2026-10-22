@@ -2,7 +2,8 @@ import Darwin
 import Foundation
 
 /// Starts the kit's helper in run mode, follows its events and shuts it down.
-/// Events arrive on a private serial queue, in order, and end with `exited`.
+/// Events arrive on a private serial queue, in order, and end with `exited`,
+/// which comes once the helper has ended, so the caller may start again from it.
 public final class VMRunClient: @unchecked Sendable {
     public typealias EventHandler = @Sendable (VMRunEvent) -> Void
 
@@ -17,8 +18,11 @@ public final class VMRunClient: @unchecked Sendable {
     private var outputClosed = false
     private var terminationStatus: Int32?
     private var finished = true
-    private var sawExited = false
+    private var exitEvent: VMRunEvent?
     private var protocolFailed = false
+    /// Each run's callbacks carry its number, so a late callback from an
+    /// earlier run never touches the next one.
+    private var run = 0
 
     public static let errorTailBytes = 16_384
 
@@ -81,8 +85,9 @@ public final class VMRunClient: @unchecked Sendable {
         // A helper that already exited must not take this process with it.
         _ = fcntl(inputPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
 
-        try lock.withLock {
+        let run = try lock.withLock { () -> Int in
             guard finished else { throw VMRunError(code: .launchFailed, message: "Omarchy is already running.") }
+            self.run += 1
             self.process = process
             self.input = inputPipe.fileHandleForWriting
             self.onEvent = onEvent
@@ -91,15 +96,16 @@ public final class VMRunClient: @unchecked Sendable {
             outputClosed = false
             terminationStatus = nil
             finished = false
-            sawExited = false
+            exitEvent = nil
             protocolFailed = false
+            return self.run
         }
 
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if data.isEmpty { handle.readabilityHandler = nil }
             guard let self else { return }
-            self.queue.async { self.receiveOutput(data) }
+            self.queue.async { self.receiveOutput(data, run: run) }
         }
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -109,6 +115,7 @@ public final class VMRunClient: @unchecked Sendable {
             }
             guard let self else { return }
             self.lock.withLock {
+                guard self.run == run else { return }
                 self.errorTail.append(data)
                 if self.errorTail.count > Self.errorTailBytes {
                     self.errorTail = self.errorTail.suffix(Self.errorTailBytes)
@@ -118,9 +125,9 @@ public final class VMRunClient: @unchecked Sendable {
         process.terminationHandler = { [weak self] process in
             let status = Self.status(of: process)
             guard let self else { return }
-            self.queue.async { self.receiveTermination(status) }
+            self.queue.async { self.receiveTermination(status, run: run) }
             // The output closes when the helper exits; wait briefly for it.
-            self.queue.asyncAfter(deadline: .now() + 2) { self.finishIfNeeded(force: true) }
+            self.queue.asyncAfter(deadline: .now() + 2) { self.finishIfNeeded(force: true, run: run) }
         }
 
         do {
@@ -152,10 +159,11 @@ public final class VMRunClient: @unchecked Sendable {
         kill(process.processIdentifier, SIGTERM)
     }
 
-    private func receiveOutput(_ data: Data) {
+    private func receiveOutput(_ data: Data, run: Int) {
+        guard lock.withLock({ self.run == run && !finished }) else { return }
         guard !data.isEmpty else {
             lock.withLock { outputClosed = true }
-            finishIfNeeded(force: false)
+            finishIfNeeded(force: false, run: run)
             return
         }
         lock.withLock { outputBuffer.append(data) }
@@ -195,31 +203,36 @@ public final class VMRunClient: @unchecked Sendable {
         terminate()
     }
 
+    /// `exited` waits until the helper and its output have ended, so a
+    /// caller may start again from it.
     private func deliver(_ event: VMRunEvent) {
         let handler = lock.withLock { () -> EventHandler? in
-            guard !finished, !sawExited else { return nil }
-            if case .exited = event { sawExited = true }
+            guard !finished, exitEvent == nil else { return nil }
+            if case .exited = event {
+                exitEvent = event
+                return nil
+            }
             return onEvent
         }
         handler?(event)
     }
 
-    private func receiveTermination(_ status: Int32) {
-        lock.withLock { terminationStatus = status }
-        finishIfNeeded(force: false)
+    private func receiveTermination(_ status: Int32, run: Int) {
+        lock.withLock { if self.run == run { terminationStatus = status } }
+        finishIfNeeded(force: false, run: run)
     }
 
-    private func finishIfNeeded(force: Bool) {
-        let result = lock.withLock { () -> (EventHandler, Int32, Bool)? in
-            guard !finished, let status = terminationStatus, outputClosed || force else { return nil }
+    private func finishIfNeeded(force: Bool, run: Int) {
+        let result = lock.withLock { () -> (EventHandler, VMRunEvent)? in
+            guard self.run == run, !finished, let status = terminationStatus, outputClosed || force else { return nil }
             finished = true
             process = nil
             try? input?.close()
             input = nil
-            return (onEvent, status, sawExited)
+            return (onEvent, exitEvent ?? .exited(status: status))
         }
-        guard let (handler, status, sawExited) = result else { return }
-        if !sawExited { handler(.exited(status: status)) }
+        guard let (handler, event) = result else { return }
+        handler(event)
     }
 
     private static func status(of process: Process) -> Int32 {
