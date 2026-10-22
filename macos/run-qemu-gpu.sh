@@ -213,7 +213,7 @@ require_qemu_device() {
 }
 for device in hda-micro intel-hda virtconsole virtserialport virtio-balloon-pci virtio-9p-pci \
   virtio-blk-pci virtio-gpu-gl-pci virtio-keyboard-pci virtio-net-pci virtio-rng-pci \
-  virtio-serial-pci virtio-tablet-pci virtio-pinch-pci; do
+  virtio-serial-pci virtio-tablet-pci virtio-pinch-pci qemu-xhci usb-kbd; do
   require_qemu_device "$device"
 done
 
@@ -261,12 +261,15 @@ keyboard=$("$native_bridge" --host-keyboard-geometry) || fail "cannot detect the
 case $keyboard in ansi | iso | jis) host_options+=" tryomarchy.keyboard=$keyboard" ;; *) fail "invalid keyboard geometry" ;; esac
 # QEMU's Cocoa display maps the ISO section key from the same geometry.
 export TRYOMARCHY_KEYBOARD=$keyboard
-# A Korean input source makes Caps Lock the Mac's 한/영 key. Cocoa then mirrors
-# the Mac input source into the guest. JIS Macs keep their かな/英数 keys.
+# A non-Latin input method lets Caps Lock switch input source, as the Mac's
+# 한/영 key on Korean Macs. Cocoa then mirrors the Mac input source into the
+# guest. JIS Macs keep their かな/英数 keys.
 unset TRYOMARCHY_CAPS_LOCK
 if [[ $keyboard != jis ]]; then
   caps_lock_input=$("$native_bridge" --host-caps-lock-input 2>/dev/null) || caps_lock_input=
-  if [[ $caps_lock_input == hangul ]]; then export TRYOMARCHY_CAPS_LOCK=hangul; fi
+  case $caps_lock_input in
+    hangul | input-method) export TRYOMARCHY_CAPS_LOCK=$caps_lock_input ;;
+  esac
 fi
 
 # The camera housing of the Mac's built-in panel, one WIDTHxHEIGHT:TOP per
@@ -346,7 +349,6 @@ usb_host_properties=${OMARCHY_QEMU_GPU_USB_HOST:-}
 if [[ -n $usb_host_properties ]]; then
   [[ $usb_host_properties =~ ^[a-z]+=[0-9A-Fa-fx.]+(,[a-z]+=[0-9A-Fa-fx.]+)*$ ]] ||
     fail "OMARCHY_QEMU_GPU_USB_HOST must be usb-host properties, for example vendorid=0x05ac"
-  require_qemu_device qemu-xhci
   require_qemu_device usb-host
   # Unpatched QEMU reads hostbus=0 as "any bus" and could take a twin.
   LC_ALL=C grep -aFq 'exact bus 0 matching' "$qemu_bin" ||
@@ -677,6 +679,8 @@ qemu_args=(
   -device 'virtio-keyboard-pci,romfile='
   -device 'virtio-tablet-pci,romfile='
   -device 'virtio-pinch-pci,romfile='
+  -device 'qemu-xhci,id=omarchy-usb,streams=off'
+  -device 'usb-kbd,bus=omarchy-usb.0,id=omarchy-boot-keyboard'
   -object 'rng-random,id=omarchy-rng,filename=/dev/urandom'
   -device 'virtio-rng-pci,rng=omarchy-rng'
   -device virtio-balloon-pci,free-page-reporting=on
@@ -722,7 +726,6 @@ if [[ -n $shared_folder ]]; then
 fi
 if [[ -n $usb_host_properties ]]; then
   qemu_args+=(
-    -device 'qemu-xhci,id=omarchy-usb,streams=off'
     -device "usb-host,bus=omarchy-usb.0,id=omarchy-usb-host,$usb_host_properties"
   )
 fi

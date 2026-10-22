@@ -61,7 +61,7 @@ write_qemu() { # extra-marker
 if [[ "\$*" == "-device help" ]]; then
   for device in hda-micro intel-hda virtconsole virtserialport virtio-balloon-pci virtio-9p-pci \\
     virtio-blk-pci virtio-gpu-gl-pci virtio-keyboard-pci virtio-net-pci virtio-rng-pci \\
-    virtio-serial-pci virtio-tablet-pci virtio-pinch-pci qemu-xhci usb-host; do
+    virtio-serial-pci virtio-tablet-pci virtio-pinch-pci qemu-xhci usb-kbd usb-host; do
     printf 'name "%s", bus PCI\n' "\$device"
   done
   exit 0
@@ -200,12 +200,18 @@ assert_contains "$output" "-monitor none"
 for forbidden in -no-reboot -no-shutdown ' -gdb ' ' -s '; do
   assert_not_contains "$output" "$forbidden"
 done
-assert_not_contains "$output" "qemu-xhci"
+assert_contains "$output" "-device qemu-xhci,id=omarchy-usb,streams=off"
+assert_contains "$output" "-device usb-kbd,bus=omarchy-usb.0,id=omarchy-boot-keyboard"
+assert_not_contains "$output" "usb-host"
 
-# --- Caps Lock becomes Hangul only on a non-JIS Mac with a Korean input source --------
+# --- Caps Lock follows the Mac input source only on a non-JIS Mac with an input method --
 assert_contains "$output" "Caps Lock input: caps-lock"
 output=$(FAKE_KEYBOARD=ansi FAKE_CAPS_LOCK_INPUT=hangul launch)
 assert_contains "$output" "Caps Lock input: hangul"
+output=$(FAKE_KEYBOARD=ansi FAKE_CAPS_LOCK_INPUT=input-method launch)
+assert_contains "$output" "Caps Lock input: input-method"
+output=$(FAKE_CAPS_LOCK_INPUT=input-method launch)
+assert_contains "$output" "Caps Lock input: caps-lock"
 output=$(FAKE_KEYBOARD=iso FAKE_CAPS_LOCK_INPUT=hangul launch)
 assert_contains "$output" "Caps Lock input: hangul"
 output=$(FAKE_CAPS_LOCK_INPUT=hangul launch)

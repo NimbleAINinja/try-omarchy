@@ -102,9 +102,9 @@ class GraphicalBridges(unittest.TestCase):
         install = (PACKAGE / "try-omarchy.install").read_text()
         self.assertIn("omarchy-native-dictation-bridge.service", install[:install.index("post_install()")])
         post_upgrade = install[install.index("post_upgrade()"):]
-        self.assertIn('if [ "$(vercmp "$2" 0.1.0-32)" -lt 0 ]; then\n'
+        self.assertIn('if [ "$(vercmp "$2" 0.1.0-33)" -lt 0 ]; then\n'
                       '    systemctl --global preset omarchy-native-dictation-bridge.service', post_upgrade)
-        self.assertIn("pkgrel=32\n", (PACKAGE / "PKGBUILD").read_text())
+        self.assertIn("pkgrel=33\n", (PACKAGE / "PKGBUILD").read_text())
 
     def test_dictation_bridge_waits_for_its_port(self):
         unit = configparser.ConfigParser(interpolation=None, strict=False)
@@ -843,6 +843,31 @@ class InputInit(unittest.TestCase):
         self.assertFalse(self.config.exists())
         self.assertTrue(self.init())
         self.assertIn("0=Henkan\n1=Hangul\n", self.config.read_text())
+
+    def mode_keys(self):
+        return self.module.initialize_mode_keys(self.config, self.tmp / "state/try-omarchy/fcitx-mode-keys-v1")
+
+    def test_adds_the_mac_switch_keys_to_an_older_profile_once(self):
+        self.config.parent.mkdir()
+        self.config.write_text("[Hotkey/TriggerKeys]\n0=Control+space\n\n[Hotkey/ActivateKeys]\n0=Hangul_Hanja\n\n"
+                               "[Behavior]\nActiveByDefault=False\n")
+        self.assertTrue(self.mode_keys())
+        text = self.config.read_text()
+        self.assertEqual(self.module.section_values(text, "Hotkey/ActivateKeys"), ["Hangul_Hanja", "Henkan"])
+        self.assertEqual(self.module.section_values(text, "Hotkey/DeactivateKeys"), ["Muhenkan"])
+        self.assertEqual(self.module.section_values(text, "Hotkey/TriggerKeys"), ["Control+space"])
+        self.assertIn("ActiveByDefault=False", text)
+        self.config.write_text("[Hotkey/ActivateKeys]\n0=Hangul_Hanja\n")
+        self.assertFalse(self.mode_keys())
+        self.assertEqual(self.config.read_text(), "[Hotkey/ActivateKeys]\n0=Hangul_Hanja\n")
+
+    def test_leaves_current_profiles_and_waits_for_a_missing_one(self):
+        self.assertFalse(self.mode_keys())
+        self.assertFalse(self.config.exists())
+        self.config.parent.mkdir()
+        self.config.write_text(self.STOCK)
+        self.assertTrue(self.mode_keys())
+        self.assertEqual(self.config.read_text(), self.STOCK)
 
 
 class TimeZone(unittest.TestCase):
