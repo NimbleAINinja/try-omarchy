@@ -70,6 +70,12 @@ fi
 [[ "\$*" == *"-qmp stdio"* ]] && exit 1
 printf '%s\n' "\$*" >>"$test_root/qemu-invocations"
 printf '%s -> %s\n' "\$0" "\$(readlink "\$0")" >>"$test_root/qemu-executables"
+info="\$(dirname "\$0")/../Info.plist"
+if [[ -f \$info ]]; then
+  for key in CFBundleExecutable CFBundleName CFBundleDisplayName CFBundlePackageType; do
+    printf '%s=%s\n' "\$key" "\$(/usr/bin/plutil -extract "\$key" raw -o - "\$info")" >>"$test_root/qemu-executables"
+  done
+fi
 exit 1
 SH
   chmod 755 "$resources/runtime/bin/Try Omarchy"
@@ -242,7 +248,7 @@ output=$(launch)
 assert_contains "$output" "Product icon: $resources/TryOmarchy.icns"
 assert_not_contains "$output" "tryomarchy.product_name="
 output=$(OMARCHY_PRODUCT_NAME='Omarchy, Installer' OMARCHY_PRODUCT_ICON="$test_root/Installer.icns" launch)
-assert_contains "$output" "/product/Omarchy, Installer -name guest=Omarchy,, Installer "
+assert_contains "$output" "/product/Omarchy, Installer.app/Contents/MacOS/Omarchy, Installer -name guest=Omarchy,, Installer "
 assert_contains "$output" " tryomarchy.product_name=T21hcmNoeSwgSW5zdGFsbGVy"
 assert_contains "$output" "Product icon: $test_root/Installer.icns"
 output=$(OMARCHY_PRODUCT_NAME='オマーキー' launch)
@@ -257,6 +263,12 @@ output=$(OMARCHY_PRODUCT_NAME=$flags launch)
 assert_contains "$output" "$resources/runtime/bin/Try Omarchy -name "
 assert_not_contains "$output" "/product/"
 assert_not_contains "$output" "tryomarchy.product_name="
+# The bundle adds .app, so 252 bytes no longer fit.
+long_name=$(printf 'x%.0s' {1..252})
+output=$(OMARCHY_PRODUCT_NAME=$long_name launch)
+assert_contains "$output" "$resources/runtime/bin/Try Omarchy -name guest=$long_name "
+output=$(OMARCHY_PRODUCT_NAME='Omarchy & <Co>' launch)
+assert_contains "$output" "/product/Omarchy & <Co>.app/Contents/MacOS/Omarchy & <Co> -name "
 for icon in Installer.icns "$test_root/missing.icns" "$test_root"; do
   output=$(OMARCHY_PRODUCT_ICON=$icon launch) && fail "the product icon $icon was accepted"
   assert_contains "$output" "OMARCHY_PRODUCT_ICON must be the absolute path of an icon file"
@@ -319,14 +331,17 @@ work=$(sed -n 's/.*unix:\/tmp\/\(omarchy-qemu-gpu\.[A-Za-z0-9]*\)\/qmp.sock.*/\1
 [[ -n $work && ! -e /private/tmp/$work ]] || fail "the run directory was not removed"
 [[ $(<"$test_root/qemu-executables") == "$resources/runtime/bin/Try Omarchy -> " ]] ||
   fail "Try Omarchy did not start its QEMU directly"
-# A smaller size never shrinks the disk. Another product starts QEMU through a
-# link with its name, which the Dock shows.
+# A smaller size never shrinks the disk. Another product starts QEMU from an
+# app bundle with its name, which the Dock shows.
 : >"$test_root/qemu-executables"
 launch_env=(OMARCHY_QEMU_GPU_DRY_RUN=0 OMARCHY_QEMU_GPU_DISK_GIB=1 OMARCHY_PRODUCT_NAME='Omarchy Installer')
 launch >/dev/null && fail "the fake QEMU launch succeeded"
 [[ $(stat -f %z "$state/shell/disk.img") == 1073741824 ]] || fail "the disk changed size"
-[[ $(<"$test_root/qemu-executables") =~ ^/private/tmp/omarchy-qemu-gpu\.[A-Za-z0-9]{6}/product/Omarchy\ Installer\ -\>\ (.*)$ &&
-  ${BASH_REMATCH[1]} == "$resources/runtime/bin/Try Omarchy" ]] || fail "QEMU did not start under the product's name"
+product_start=$(head -1 "$test_root/qemu-executables")
+[[ $product_start =~ ^/private/tmp/omarchy-qemu-gpu\.[A-Za-z0-9]{6}/product/Omarchy\ Installer\.app/Contents/MacOS/Omarchy\ Installer\ -\>\ (.*)$ &&
+  ${BASH_REMATCH[1]} == "$resources/runtime/bin/Try Omarchy" ]] || fail "QEMU did not start under the product's name: $product_start"
+[[ $(tail -n +2 "$test_root/qemu-executables") == $'CFBundleExecutable=Omarchy Installer\nCFBundleName=Omarchy Installer\nCFBundleDisplayName=Omarchy Installer\nCFBundlePackageType=APPL' ]] ||
+  fail "the product's app bundle does not name the product"
 assert_contains "$(<"$test_root/qemu-invocations")" "-name guest=Omarchy Installer "
 : >"$test_root/qemu-invocations"
 

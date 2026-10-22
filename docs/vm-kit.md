@@ -48,7 +48,7 @@ The app starts `omarchy-vm-helper --run-vm` from the kit, writes one configurati
 
 The configuration names the product, its icon (an `.icns` or `.png` file; the kit's own icon when absent) and the optional bridges. Its storage folder, memory, CPUs and network are fallbacks for a VM with no stored settings ([settings](#settings)). Audio, guest status and the settings bridge always run.
 
-The Omarchy window, its Dock entry and its application menu carry the product's name and icon. The Dock names a process after the file it starts from, so the launcher starts QEMU through a link named after the product, in the run's private folder. The signed binary stays in place. A name with a `/` cannot name a file, so its Dock entry keeps the binary's name.
+The Omarchy window, its Dock entry and its application menu carry the product's name and icon. The Dock names a process that has no app bundle after its file, even when it starts through a link. So the launcher starts QEMU from a minimal app bundle named after the product, in the run's private folder, whose executable links to the signed binary. The binary stays in place, so its signature and the bridges' check of the QEMU process are unchanged. A name that cannot be a file name, with a `/` or longer than 251 bytes, keeps the binary's name in the Dock.
 
 The run mode writes `progress` (a phase and a percent), `ready`, `stopping`, `error` (a stable code and a message) and, last, `exited`. Error codes do not change between versions; messages may.
 
