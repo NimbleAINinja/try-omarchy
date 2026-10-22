@@ -43,7 +43,8 @@ chmod 755 "$resources/scripts/run-qemu-gpu.sh"
 cat >"$app/Contents/MacOS/omarchy-vm-helper" <<'SH'
 #!/bin/bash
 case $1 in
-  --host-keyboard-geometry) echo jis ;;
+  --host-keyboard-geometry) echo "${FAKE_KEYBOARD-jis}" ;;
+  --host-caps-lock-input) printf '%s\n' "${FAKE_CAPS_LOCK_INPUT-}" ;;
   --host-display-cutouts) printf '%s\n' "${FAKE_DISPLAY_CUTOUTS-3024x1964:64,2048x1330:44}" ;;
   --host-timezone) echo America/Sao_Paulo ;;
   --sparsify) exit 0 ;;
@@ -195,6 +196,17 @@ for forbidden in -no-reboot -no-shutdown ' -gdb ' ' -s '; do
   assert_not_contains "$output" "$forbidden"
 done
 assert_not_contains "$output" "qemu-xhci"
+
+# --- Caps Lock becomes Hangul only on a non-JIS Mac with a Korean input source --------
+assert_contains "$output" "Caps Lock input: caps-lock"
+output=$(FAKE_KEYBOARD=ansi FAKE_CAPS_LOCK_INPUT=hangul launch)
+assert_contains "$output" "Caps Lock input: hangul"
+output=$(FAKE_KEYBOARD=iso FAKE_CAPS_LOCK_INPUT=hangul launch)
+assert_contains "$output" "Caps Lock input: hangul"
+output=$(FAKE_CAPS_LOCK_INPUT=hangul launch)
+assert_contains "$output" "Caps Lock input: caps-lock"
+output=$(FAKE_KEYBOARD=ansi FAKE_CAPS_LOCK_INPUT=other TRYOMARCHY_CAPS_LOCK=hangul launch)
+assert_contains "$output" "Caps Lock input: caps-lock"
 
 # --- the camera housing reaches the guest only from a notched Mac --------------------
 output=$(FAKE_DISPLAY_CUTOUTS= launch)

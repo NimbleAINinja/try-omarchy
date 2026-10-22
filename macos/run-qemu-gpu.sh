@@ -261,6 +261,13 @@ keyboard=$("$native_bridge" --host-keyboard-geometry) || fail "cannot detect the
 case $keyboard in ansi | iso | jis) host_options+=" tryomarchy.keyboard=$keyboard" ;; *) fail "invalid keyboard geometry" ;; esac
 # QEMU's Cocoa display maps the ISO section key from the same geometry.
 export TRYOMARCHY_KEYBOARD=$keyboard
+# A Korean input source makes Caps Lock the Mac's 한/영 key. Cocoa then mirrors
+# the Mac input source into the guest. JIS Macs keep their かな/英数 keys.
+unset TRYOMARCHY_CAPS_LOCK
+if [[ $keyboard != jis ]]; then
+  caps_lock_input=$("$native_bridge" --host-caps-lock-input 2>/dev/null) || caps_lock_input=
+  if [[ $caps_lock_input == hangul ]]; then export TRYOMARCHY_CAPS_LOCK=hangul; fi
+fi
 
 # The camera housing of the Mac's built-in panel, one WIDTHxHEIGHT:TOP per
 # display mode in pixels: QEMU's full screen covers the strip beside it, and
@@ -722,6 +729,7 @@ if ((dry_run)); then
   printf '[qemu-gpu] dry-run command:' >&2
   printf ' %q' "$qemu_bin" "${qemu_args[@]}" >&2
   printf '\n[qemu-gpu] host settings: %s\n' "$host_options" >&2
+  printf '[qemu-gpu] Caps Lock input: %s\n' "${TRYOMARCHY_CAPS_LOCK:-caps-lock}" >&2
   exit 0
 fi
 
