@@ -50,6 +50,8 @@ systemctl status try-omarchy-timezone.service
 journalctl -u try-omarchy-timezone.service -b
 ```
 
+The Linux desktop job in CI gives the factory Asia/Tokyo as the Mac's zone, fails setup unless the form's default arrives as **Same as macOS**, and checks that the guest then follows Asia/Tokyo.
+
 In a fresh VM, setup preselected the Mac's zone (Asia/Tokyo). Following live
 Mac changes, the fixed-zone opt-out and **Same as macOS** in the setup form
 and the menu have not been verified in the current guest yet. To verify, use a disposable VM: finish setup

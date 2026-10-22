@@ -20,7 +20,8 @@
 # What differs from the VM, and why: no kernel or firmware of the guest's
 # own; no Mac on the other side of the virtio ports (units that need one are
 # skipped by their conditions, or listed in container-expected); the form of
-# first-boot setup is answered by provision-seeded.sh; SDDM, which needs a
+# first-boot setup is answered by provision-seeded.sh, and the host settings
+# credential carries only a Mac time zone; SDDM, which needs a
 # virtual terminal, is masked and the session is started the way SDDM's
 # autologin starts it (a PAM login running the session entry, with the seat
 # named since the session has no VT); pacman's download sandbox is off when the
@@ -51,6 +52,7 @@ apps=("$@")
 here=$(cd "$(dirname "$0")" && pwd)
 machine=omarchy-ci
 user=omarchy-ci
+mac_timezone=Asia/Tokyo
 for tool in systemd-nspawn machinectl zstd jq losetup; do
   command -v "$tool" >/dev/null || fail "$tool is required"
 done
@@ -167,7 +169,7 @@ systemd-nspawn --boot --quiet --machine="$machine" --directory="$root" \
   --network-veth --resolv-conf=auto --timezone=off --link-journal=no \
   --bind-ro="$work/fstab:/etc/fstab" --bind-ro="$here:/ci" --bind="$run:/ci-run" \
   --bind="$card" --property="DeviceAllow=$card rw" --bind=/dev/fuse --property="DeviceAllow=/dev/fuse rwm" \
-  --bind-ro=/run/udev ${offer[@]+"${offer[@]}"} \
+  --bind-ro=/run/udev --set-credential="tryomarchy.host:tryomarchy.timezone=$mac_timezone" ${offer[@]+"${offer[@]}"} \
   --console=pipe </dev/null >"$out/console.log" 2>&1 &
 nspawn_pid=$!
 # The host side of the container's network: systemd-networkd's

@@ -29,9 +29,23 @@ email_address="ci@example.invalid"
 hostname=omarchy-ci
 keyboard_label="English (US)"
 }
-# What the form preselects: its time zone default (try-omarchy's drop-in sets
-# Same as macOS while the guest follows the Mac), else UTC in place of the
-# network guess.
+# What the form preselects: its time zone default, else UTC in place of the
+# network guess. When the host settings carry the Mac's zone, try-omarchy's
+# drop-in must have set that default to Same as macOS.
+host=()
+if [[ -r /run/try-omarchy/cmdline ]]; then
+  read -r -a host </run/try-omarchy/cmdline || true
+fi
+for token in ${host[@]+"${host[@]}"}; do
+  case $token in
+    tryomarchy.timezone=*)
+      if [[ ${OMARCHY_FORM_TIMEZONE_DEFAULT-} != "Same as macOS" ]]; then
+        echo "provision-seeded: the Mac's zone is ${token#*=}, but the form's time zone default is '${OMARCHY_FORM_TIMEZONE_DEFAULT-}', not 'Same as macOS'" >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
 timezone=${OMARCHY_FORM_TIMEZONE_DEFAULT:-UTC}
 echo "provision-seeded: user $username, time zone $timezone"
 
