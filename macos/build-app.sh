@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: macos/build-app.sh [--open] [--dmg] [--guest-dir DIR]
+Usage: macos/build-app.sh [--open] [--dmg] [--kit] [--guest-dir DIR]
                                   [--configuration development|production]
                                   [--sign-identity IDENTITY]
                                   [--notarize-profile PROFILE]
@@ -19,12 +19,16 @@ Development builds carry the compressed factory. Production builds, and any
 build given --factory-download-url, carry a download manifest instead and write
 the image's parts to dist/factory/ for upload beside the DMG. Production builds
 default to the GitHub release of HEAD's vX.Y.Z tag.
+
+--kit also derives the kit other apps embed (macos/build-kit.sh) into
+dist/kit.noindex/. It needs a build that downloads its factory.
 EOF
   exit 64
 }
 
 open_app=0
 build_dmg=0
+build_kit=0
 guest_dir=
 configuration=development
 sign_identity=${OMARCHY_CODESIGN_IDENTITY:-auto}
@@ -34,6 +38,7 @@ while (($#)); do
   case "$1" in
     --open) open_app=1; shift ;;
     --dmg) build_dmg=1; shift ;;
+    --kit) build_kit=1; shift ;;
     --configuration)
       (($# >= 2)) || usage
       configuration=$2
@@ -167,6 +172,10 @@ for tool in python3 sips xcrun; do
     exit 1
   }
 done
+if (( build_kit )) && [[ -z $factory_download_url ]]; then
+  echo "build-app: --kit needs a build that downloads its factory (production, or --factory-download-url)" >&2
+  exit 1
+fi
 if [[ -n $notarize_profile && $sign_identity == - ]]; then
   echo "build-app: notarization requires --sign-identity with a Developer ID Application identity" >&2
   exit 1
@@ -348,6 +357,9 @@ codesign --verify --deep --strict --verbose=2 "$app"
 "$compatibility_verifier" "$app"
 
 echo "[native] Built $app"
+if (( build_kit )); then
+  "$macos_dir/build-kit.sh" --app "$app" --output "$repo_dir/dist/kit.noindex" --sign-identity "$sign_identity"
+fi
 if (( build_dmg )); then
   dmg="$repo_dir/dist/TryOmarchy.dmg"
   rm -f "$dmg"

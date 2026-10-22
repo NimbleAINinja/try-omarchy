@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -117,6 +118,16 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
     if not dmg.is_file():
         raise ValueError(f"release DMG was not produced: {dmg}")
 
+    # Installers pin the kit by this digest.
+    kit = root / "dist/kit.noindex/TryOmarchyKit.zip"
+    try:
+        recorded = (kit.parent / f"{kit.name}.sha256").read_text().split()[0]
+        actual = hashlib.sha256(kit.read_bytes()).hexdigest()
+    except (OSError, IndexError) as error:
+        raise ValueError(f"release kit was not produced: {error}") from error
+    if recorded != actual:
+        raise ValueError(f"the kit's recorded digest does not match {kit}")
+
     # The app downloads its factory from this release's assets.
     try:
         manifest = json.loads((app / "Contents/Resources/guest/download.json").read_text())
@@ -134,7 +145,9 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
 
 
 def release_assets(root: Path) -> list[Path]:
-    return [root / "dist/TryOmarchy.dmg", *sorted((root / "dist/factory").glob("*"))]
+    kit = root / "dist/kit.noindex"
+    return [root / "dist/TryOmarchy.dmg", kit / "TryOmarchyKit.zip", kit / "TryOmarchyKit.zip.sha256",
+            *sorted((root / "dist/factory").glob("*"))]
 
 
 def prepare_factory(root: Path, make: str, force: bool) -> None:
@@ -187,7 +200,7 @@ def release(root: Path, make: str) -> None:
         if not version or version["TryOmarchyBuildDescribe"] != tag:
             raise ValueError(f"app version does not resolve to {tag}; check the tags on HEAD")
         subprocess.run([
-            str(root / "macos/build-app.sh"), "--configuration", "production", "--dmg",
+            str(root / "macos/build-app.sh"), "--configuration", "production", "--dmg", "--kit",
             "--guest-dir", str(root / "dist/guest"),
             "--sign-identity", identity, "--notarize-profile", profile,
         ], cwd=root, check=True)

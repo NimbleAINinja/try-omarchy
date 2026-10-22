@@ -78,7 +78,7 @@ root = Path(__file__).resolve().parents[1]
 out = root / "dist"
 with (out / "events").open("a") as stream:
     stream.write("package\\n")
-assert sys.argv[1:] == ["--configuration", "production", "--dmg",
+assert sys.argv[1:] == ["--configuration", "production", "--dmg", "--kit",
     "--guest-dir", str(out / "guest"), "--sign-identity",
     "Developer ID Application: Release Tests (TEST)", "--notarize-profile", "test-profile"]
 app = out / "release.noindex/Try Omarchy.app"
@@ -94,6 +94,11 @@ if os.environ.get("WRONG_APP_VERSION"):
 if os.environ.get("FAIL_PACKAGE"):
     sys.exit(24)
 (out / os.environ.get("DMG_NAME", "TryOmarchy.dmg")).write_text("test DMG\\n")
+kit = out / "kit.noindex/TryOmarchyKit.zip"
+kit.parent.mkdir(parents=True, exist_ok=True)
+kit.write_text("test kit\\n")
+digest = os.environ.get("WRONG_KIT_DIGEST") or __import__("hashlib").sha256(kit.read_bytes()).hexdigest()
+(kit.parent / "TryOmarchyKit.zip.sha256").write_text(f"{digest}  TryOmarchyKit.zip\\n")
 tag = plistlib.loads(plist.read_bytes())["TryOmarchyBuildDescribe"]
 part = out / "factory/omarchy-aarch64-edge.img.zst.001"
 part.parent.mkdir(exist_ok=True)
@@ -182,6 +187,10 @@ manifest.write_text(json.dumps({"parts": [{"url": url, "bytes": 5}]}))
     def test_release_factory_download_points_at_its_own_assets(self) -> None:
         result = self.run_release(WRONG_FACTORY_URL="1")
         self.assert_failed(result, "the factory download does not point at v1.2.3")
+
+    def test_release_kit_matches_its_recorded_digest(self) -> None:
+        result = self.run_release(WRONG_KIT_DIGEST="0" * 64)
+        self.assert_failed(result, "the kit's recorded digest does not match")
 
     def test_release_requires_stable_dmg(self) -> None:
         for name in ("TryOmarchy-v1.2.3.dmg", "TryOmarchy-v1.2.2.dmg"):

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -81,6 +82,10 @@ class PublishTests(unittest.TestCase):
         url = f"https://github.com/omacom/try-omarchy/releases/download/{factory_tag or tag}/omarchy-aarch64-edge.img.zst.001"
         (app / "Resources/guest/download.json").write_text(json.dumps({"parts": [{"url": url, "bytes": 5}]}))
         (dist / "TryOmarchy.dmg").write_text("dmg")
+        (dist / "kit.noindex").mkdir(exist_ok=True)
+        (dist / "kit.noindex/TryOmarchyKit.zip").write_text("kit")
+        digest = hashlib.sha256(b"kit").hexdigest()
+        (dist / "kit.noindex/TryOmarchyKit.zip.sha256").write_text(f"{digest}  TryOmarchyKit.zip\n")
 
     def set_releases(self, releases: list[dict]) -> None:
         self.state.write_text(json.dumps({"releases": releases, "calls": []}))
@@ -98,7 +103,9 @@ class PublishTests(unittest.TestCase):
         return self.git("rev-parse", "v1.2.3^{commit}", cwd=self.origin)
 
     def assets(self) -> list[str]:
-        return [str(self.root / "dist/TryOmarchy.dmg"), str(self.root / "dist/factory/omarchy-aarch64-edge.img.zst.001")]
+        return [str(self.root / "dist/TryOmarchy.dmg"), str(self.root / "dist/kit.noindex/TryOmarchyKit.zip"),
+                str(self.root / "dist/kit.noindex/TryOmarchyKit.zip.sha256"),
+                str(self.root / "dist/factory/omarchy-aarch64-edge.img.zst.001")]
 
     def test_pushes_the_tag_then_creates_a_draft_with_the_assets(self) -> None:
         result = self.publish()

@@ -22,7 +22,7 @@ SHELL_TESTS := network-helper qemu-networking qemu-port-forwarding run-qemu-gpu 
 SHELL_TEST_TARGETS := $(addprefix test-shell-,$(SHELL_TESTS))
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor test guest guest-package refresh runtime firmware app build run run-ephemeral reset version-preflight package package-preflight release release-preflight publish clean clean-all clean-guest
+.PHONY: help doctor test guest guest-package refresh runtime firmware app kit build run run-ephemeral reset version-preflight package package-preflight release release-preflight publish clean clean-all clean-guest
 .PHONY: test-all test-contracts test-guest test-swift test-shell $(SHELL_TEST_TARGETS)
 .PHONY: test-upstream test-guest-install e2e
 
@@ -43,7 +43,9 @@ help:
 	  '                      Automatically select a stable development certificate' \
 	  '  make run DEVELOPMENT_SIGN_IDENTITY="Apple Development: ..."' \
 	  '                      Choose a certificate when several are available' \
-	  '  make package        Create a signed and notarized distribution DMG' \
+	  '  make package        Create a signed and notarized distribution DMG and kit' \
+	  '  make kit            Build the kit other apps embed to run the VM (ad-hoc signed)' \
+	  '  make kit FACTORY_DOWNLOAD_URL=http://127.0.0.1:8000/  Download the factory from a local server' \
 	  '  make release        Choose a version, tag, and build a notarized DMG (latest factory)' \
 	  '  make release VERSION=vX.Y.Z  Choose the version without prompting' \
 	  '  make release FORCE=1  Rebuild the factory even if it matches upstream' \
@@ -173,6 +175,15 @@ app: guest runtime firmware
 	  --root "$(ROOT)" --state-dir "$(BUILD_STATE)" app -- \
 	  "$(ROOT)/macos/build-app.sh" --guest-dir "$(GUEST_DIST)"
 
+# The kit other apps embed (docs/installer-trial.md): a production build that
+# downloads its factory, from HEAD's release unless FACTORY_DOWNLOAD_URL is set.
+KIT_SIGN_IDENTITY ?= -
+FACTORY_DOWNLOAD_URL ?=
+kit: guest runtime firmware
+	@"$(ROOT)/macos/build-app.sh" --configuration production --kit \
+	  --guest-dir "$(GUEST_DIST)" --sign-identity "$(KIT_SIGN_IDENTITY)" \
+	  $(if $(FACTORY_DOWNLOAD_URL),--factory-download-url "$(FACTORY_DOWNLOAD_URL)")
+
 build: doctor app
 	@printf 'Build output: %s\n' "$(APP)"
 	@python3 "$(ROOT)/scripts/factory-freshness.py" --root "$(ROOT)"
@@ -204,6 +215,7 @@ package: package-preflight
 	@$(ROOT)/macos/build-app.sh \
 	  --configuration production \
 	  --dmg \
+	  --kit \
 	  --guest-dir "$(GUEST_DIST)" \
 	  --sign-identity "$(PACKAGE_SIGN_IDENTITY)" \
 	  --notarize-profile "$(PACKAGE_NOTARY_PROFILE)"
