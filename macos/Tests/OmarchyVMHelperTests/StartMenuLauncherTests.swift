@@ -170,6 +170,21 @@ struct StartMenuLauncherTests {
         #expect(launchCount == 1)
     }
 
+    @Test("running settings drop below another app's window when they open it, and float again once key")
+    func runningSettingsYieldToAnotherApp() {
+        _ = NSApplication.shared
+        let menu = makeMenu(accessibilityStatus: { false })
+        defer { menu.dismiss() }
+        menu.launchOmarchy()
+        menu.virtualMachineDidStart {}
+        #expect(menu.window.level == .floating)
+
+        menu.actions.accessibilityAction()
+        #expect(menu.window.level == .normal)
+        menu.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: menu.window))
+        #expect(menu.window.level == .floating)
+    }
+
     @Test("the camera notch setting shows only on a Mac with a notch and saves its choice")
     func cameraNotchSetting() {
         _ = NSApplication.shared
