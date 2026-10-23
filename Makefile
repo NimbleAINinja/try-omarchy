@@ -18,13 +18,13 @@ FORCE ?= 0
 TEST_JOBS ?= 4
 
 SHELL_TESTS := network-helper qemu-networking qemu-port-forwarding run-qemu-gpu \
-  qemu-usb-passthrough qemu-monitor-ready
+  qemu-usb-passthrough qemu-monitor-ready run-mode
 SHELL_TEST_TARGETS := $(addprefix test-shell-,$(SHELL_TESTS))
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor test guest guest-package refresh runtime firmware app build run run-ephemeral reset version-preflight package package-preflight release release-preflight publish clean clean-all clean-guest
+.PHONY: help doctor test guest guest-package refresh runtime firmware app kit build run run-ephemeral reset version-preflight package package-preflight release release-preflight publish clean clean-all clean-guest
 .PHONY: test-all test-contracts test-guest test-swift test-shell $(SHELL_TEST_TARGETS)
-.PHONY: test-upstream test-guest-install e2e
+.PHONY: test-upstream test-guest-install test-kit e2e
 
 help:
 	@printf '%s\n' \
@@ -35,6 +35,7 @@ help:
 	  '  make test TEST_JOBS=1  Run test suites serially for debugging' \
 	  '  make test-upstream  Check the guest package against the current Omarchy (network)' \
 	  '  make test-guest-install  Install, upgrade and remove the guest package (Docker, network)' \
+	  '  make test-kit       Check the kit make kit built (KIT_DIR=DIR checks another)' \
 	  '  make e2e            Boot a disposable VM in the app and check it end to end' \
 	  '  make build          Build only changed guest, runtime, and app inputs' \
 	  '  make build FORCE=1  Rebuild every component (the guest takes the newest Omarchy edge)' \
@@ -43,7 +44,9 @@ help:
 	  '                      Automatically select a stable development certificate' \
 	  '  make run DEVELOPMENT_SIGN_IDENTITY="Apple Development: ..."' \
 	  '                      Choose a certificate when several are available' \
-	  '  make package        Create a signed and notarized distribution DMG' \
+	  '  make package        Create a signed and notarized distribution DMG and kit' \
+	  '  make kit            Build the kit other apps embed to run the VM (ad-hoc signed)' \
+	  '  make kit FACTORY_DOWNLOAD_URL=http://127.0.0.1:8000/  Download the factory from a local server' \
 	  '  make release        Choose a version, tag, and build a notarized DMG (latest factory)' \
 	  '  make release VERSION=vX.Y.Z  Choose the version without prompting' \
 	  '  make release FORCE=1  Rebuild the factory even if it matches upstream' \
@@ -84,6 +87,7 @@ test-contracts:
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-libslirp-icmp.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-pinch.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-scroll.py"
+	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-touch-scroll.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-iso-keyboard.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-host-keys.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-media-keys.py"
@@ -91,6 +95,8 @@ test-contracts:
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-minimum-guest-size.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-no-app-nap.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-notch.py"
+	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-product-identity.py"
+	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-pointer-mapping.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-audio-runtime-patches.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-injected-text.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/macos/Tests/test-cocoa-keyboard-focus.py"
@@ -105,6 +111,8 @@ test-contracts:
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-profile-process.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-development-sign-identity.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-app-version.py"
+	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-kit-manifest.py"
+	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-kit-signature.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-release.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-publish.py"
 	@PYTHONDONTWRITEBYTECODE=1 python3 "$(ROOT)/tests/test-package-dmg.py"
@@ -122,6 +130,12 @@ test-upstream:
 	@"$(ROOT)/guest/tests/fetch-upstream.sh" "$(ROOT)/.build/upstream-omarchy"
 	@OMARCHY_UPSTREAM_ROOT="$(ROOT)/.build/upstream-omarchy" PYTHONDONTWRITEBYTECODE=1 \
 	  python3 "$(ROOT)/guest/package/tests/test_upstream.py"
+
+# A built kit, as an embedding app receives it (tests/kit/check.sh). CI builds
+# one from a stand-in guest (tests/kit/fixture-guest.py) and checks it here.
+KIT_DIR ?= $(DIST)/kit.noindex
+test-kit:
+	@"$(ROOT)/tests/kit/check.sh" "$(KIT_DIR)"
 
 # A disposable VM in the built app, first boot to second boot (tests/e2e/run.sh).
 E2E_ARGS ?=
@@ -174,6 +188,16 @@ app: guest runtime firmware
 	  --root "$(ROOT)" --state-dir "$(BUILD_STATE)" app -- \
 	  "$(ROOT)/macos/build-app.sh" --guest-dir "$(GUEST_DIST)"
 
+# The kit other apps embed (docs/vm-kit.md): a production build that
+# downloads its factory, from HEAD's release unless FACTORY_DOWNLOAD_URL is set.
+KIT_SIGN_IDENTITY ?= -
+FACTORY_DOWNLOAD_URL ?=
+kit: guest runtime firmware
+	@"$(ROOT)/macos/build-app.sh" --configuration production --kit \
+	  --guest-dir "$(GUEST_DIST)" --sign-identity "$(KIT_SIGN_IDENTITY)" \
+	  $(if $(FACTORY_DOWNLOAD_URL),--factory-download-url "$(FACTORY_DOWNLOAD_URL)")
+	@"$(ROOT)/tests/kit/check.sh" "$(DIST)/kit.noindex"
+
 build: doctor app
 	@printf 'Build output: %s\n' "$(APP)"
 	@python3 "$(ROOT)/scripts/factory-freshness.py" --root "$(ROOT)"
@@ -205,6 +229,7 @@ package: package-preflight
 	@$(ROOT)/macos/build-app.sh \
 	  --configuration production \
 	  --dmg \
+	  --kit \
 	  --guest-dir "$(GUEST_DIST)" \
 	  --sign-identity "$(PACKAGE_SIGN_IDENTITY)" \
 	  --notarize-profile "$(PACKAGE_NOTARY_PROFILE)"

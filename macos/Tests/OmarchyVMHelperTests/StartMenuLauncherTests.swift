@@ -29,38 +29,38 @@ struct StartMenuLauncherTests {
         let menu = makeMenu(launch: { launchCount += 1 })
         defer { menu.dismiss() }
         menu.prepareForPresentation(visibleFrame: nil)
-        #expect(menu.state.launchTitle == "Launch Omarchy")
-        #expect(menu.state.launchButtonTitle == "Launch Omarchy")
+        #expect(!menu.state.launchInProgress)
         #expect(menu.state.launchEnabled)
         menu.actions.launchOrDone()
         menu.actions.launchOrDone()
         #expect(launchCount == 1)
         #expect(!menu.state.launchEnabled)
-        #expect(menu.state.launchTitle == VMLaunchPhase.checking.buttonTitle)
-        let download = FactoryDownloadProgress(phase: .downloading, completedBytes: 1, totalBytes: 4)
-        menu.launchDidDownload(download)
-        #expect(menu.state.launchTitle == download.title)
-        #expect(menu.state.launchButtonTitle == "Downloading…")
+        #expect(menu.state.launchStatus == "Checking VM")
+        #expect(menu.state.launchCaption == nil)
+        let total: Int64 = 3_036_546_680
+        menu.launchDidDownload(FactoryDownloadProgress(phase: .downloading, completedBytes: total / 4, totalBytes: total))
+        #expect(menu.state.launchStatus == "Downloading Omarchy")
+        #expect(menu.state.launchCaption == "0.8 of 3.0 GB")
         #expect(menu.state.launchFraction == 0.25)
-        menu.launchDidDownload(FactoryDownloadProgress(phase: .verifying, completedBytes: 4, totalBytes: 4))
-        #expect(menu.state.launchButtonTitle == "Verifying…")
+        menu.launchDidDownload(FactoryDownloadProgress(phase: .verifying, completedBytes: total, totalBytes: total))
+        #expect(menu.state.launchStatus == "Verifying download")
+        #expect(menu.state.launchCaption == nil)
+        #expect(menu.state.launchFraction == nil)
         menu.launchDidFinishDownload()
-        #expect(menu.state.launchTitle == VMLaunchPhase.checking.buttonTitle)
-        #expect(menu.state.launchButtonTitle == "Launching…")
+        #expect(menu.state.launchStatus == "Checking VM")
         #expect(menu.state.launchFraction == nil)
         menu.launchDidProgress(to: VMProgress(phase: .preparing, percent: 40))
-        #expect(menu.state.launchTitle == "Unpacking Omarchy… 40%")
-        #expect(menu.state.launchButtonTitle == "Preparing…")
+        #expect(menu.state.launchStatus == "Unpacking Omarchy")
+        #expect(menu.state.launchCaption == "40%")
         #expect(menu.state.launchFraction == 0.4)
-        menu.launchDidProgress(to: VMProgress(phase: .finishing))
-        #expect(menu.state.launchButtonTitle == "Preparing…")
         menu.launchDidProgress(to: VMProgress(phase: .starting))
-        #expect(menu.state.launchTitle == VMLaunchPhase.starting.buttonTitle)
-        #expect(menu.state.launchButtonTitle == "Launching…")
+        #expect(menu.state.launchStatus == "Starting Omarchy")
+        #expect(menu.state.launchCaption == nil)
         #expect(menu.state.launchFraction == nil)
 
         menu.virtualMachineDidStart { closeCount += 1 }
-        #expect(menu.state.launchTitle == "Done")
+        #expect(menu.state.isRunning)
+        #expect(menu.state.launchCaption == nil)
         #expect(menu.state.launchEnabled)
         #expect(menu.window.level == .floating)
         menu.actions.launchOrDone()
@@ -168,6 +168,21 @@ struct StartMenuLauncherTests {
         #expect(menu.windowShouldClose(menu.window) == false)
         #expect(closeCount == 2)
         #expect(launchCount == 1)
+    }
+
+    @Test("running settings drop below another app's window when they open it, and float again once key")
+    func runningSettingsYieldToAnotherApp() {
+        _ = NSApplication.shared
+        let menu = makeMenu(accessibilityStatus: { false })
+        defer { menu.dismiss() }
+        menu.launchOmarchy()
+        menu.virtualMachineDidStart {}
+        #expect(menu.window.level == .floating)
+
+        menu.actions.accessibilityAction()
+        #expect(menu.window.level == .normal)
+        menu.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: menu.window))
+        #expect(menu.window.level == .floating)
     }
 
     @Test("the camera notch setting shows only on a Mac with a notch and saves its choice")
@@ -336,7 +351,7 @@ struct StartMenuLauncherTests {
         #expect(!menu.state.launchEnabled)
         #expect(!menu.state.settingsEnabled)
         let presentation = camera ? menu.state.camera : menu.state.microphone
-        #expect(presentation.actionTitle == "Waiting…")
+        #expect(presentation.actionTitle == "Waiting")
         menu.applicationDidBecomeActive()
         #expect(storageReads == initialReads)
         menu.prepareForPresentation(visibleFrame: nil)
@@ -433,7 +448,7 @@ struct StartMenuLauncherTests {
         #expect(!missingSummary.canOpenInFinder)
 
         let moving = LauncherState.storageSummary(path: path, status: custom, moving: true, canOpen: true)
-        #expect(moving.lines == ["Copying and verifying your VM… Original retained."])
+        #expect(moving.lines == ["Copying and verifying your VM. Original retained."])
         #expect(!moving.canOpenInFinder)
     }
 
@@ -473,6 +488,25 @@ struct StartMenuLauncherTests {
             == "Adapter unavailable — Omarchy will start offline")
         #expect(LauncherState.networkSummary(bridged, bridgeAvailable: true, serviceEnabled: false).warning
             == "Networking helper setup required")
+    }
+
+    @Test("bridged networking clears its warning once the helper becomes ready while the window is open")
+    func networkServiceChangeRefreshesTheWindow() {
+        _ = NSApplication.shared
+        var bridged = VMNetworkPreferences()
+        bridged.mode = .bridged
+        bridged.interface = VMBridgeInterfaces.available().first?.name ?? "en0"
+        var ready = false
+        let service = NetworkServiceControls(status: { ready ? "ready" : "setup required" }, isReady: { ready },
+                                             repair: nil, remove: nil)
+        let menu = makeMenu(networkPreferences: { bridged }, networkService: service)
+        defer { menu.dismiss() }
+        menu.prepareForPresentation(visibleFrame: nil)
+        #expect(menu.state.networkWarning != nil)
+
+        ready = true
+        menu.networkServiceChanged()
+        #expect(menu.state.networkWarning != "Networking helper setup required")
     }
 
     @Test("reset settings asks once and keeps settings when cancelled", arguments: [false, true])
@@ -515,6 +549,8 @@ struct StartMenuLauncherTests {
         requestPermission: ((@escaping (Bool) -> Void) -> Void)? = nil,
         usbState: @escaping () -> USBDeviceMenuState = { .disabled },
         resetSettings: @escaping () -> Void = {},
+        networkPreferences: @escaping () -> VMNetworkPreferences = { VMNetworkPreferences() },
+        networkService: NetworkServiceControls = .thisApp,
         notchAvailable: @escaping () -> Bool = { false },
         usesNotch: @escaping () -> Bool = { true },
         setUsesNotch: @escaping (Bool) -> Void = { _ in },
@@ -554,6 +590,8 @@ struct StartMenuLauncherTests {
             connectedUSBDevices: { [] },
             saveUSBDevice: { _ in },
             portForwardingStatus: { [] },
+            networkPreferences: networkPreferences,
+            networkService: networkService,
             immersiveMode: { true },
             setImmersiveMode: { _ in },
             notchAvailable: notchAvailable,

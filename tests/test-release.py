@@ -24,7 +24,7 @@ class ReleaseTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         (self.root / "scripts").mkdir()
         (self.root / "macos").mkdir()
-        for name in ("release.py", "app_version.py"):
+        for name in ("release.py", "app_version.py", "kit_manifest.py"):
             shutil.copy2(REPOSITORY / "scripts" / name, self.root / "scripts" / name)
         # Keep the actual public release/preflight recipes; substitute only the
         # expensive guest, runtime, and signed app builders at their boundaries.
@@ -78,7 +78,7 @@ root = Path(__file__).resolve().parents[1]
 out = root / "dist"
 with (out / "events").open("a") as stream:
     stream.write("package\\n")
-assert sys.argv[1:] == ["--configuration", "production", "--dmg",
+assert sys.argv[1:] == ["--configuration", "production", "--dmg", "--kit",
     "--guest-dir", str(out / "guest"), "--sign-identity",
     "Developer ID Application: Release Tests (TEST)", "--notarize-profile", "test-profile"]
 app = out / "release.noindex/Try Omarchy.app"
@@ -94,7 +94,18 @@ if os.environ.get("WRONG_APP_VERSION"):
 if os.environ.get("FAIL_PACKAGE"):
     sys.exit(24)
 (out / os.environ.get("DMG_NAME", "TryOmarchy.dmg")).write_text("test DMG\\n")
+kit = out / "kit.noindex/TryOmarchyKit.zip"
+kit.parent.mkdir(parents=True, exist_ok=True)
+kit.write_text("test kit\\n")
+digest = os.environ.get("WRONG_KIT_DIGEST") or __import__("hashlib").sha256(kit.read_bytes()).hexdigest()
+(kit.parent / "TryOmarchyKit.zip.sha256").write_text(f"{digest}  TryOmarchyKit.zip\\n")
 tag = plistlib.loads(plist.read_bytes())["TryOmarchyBuildDescribe"]
+kit_resources = kit.parent / "TryOmarchyKit.bundle/Contents/Resources"
+kit_resources.mkdir(parents=True, exist_ok=True)
+kit_json = json.dumps({"format": 1, "version": os.environ.get("WRONG_KIT_VERSION", tag),
+                       "runProtocolVersion": 1, "buildDate": "2026-10-23T12:00:00Z"})
+(kit_resources / "kit.json").write_text(kit_json)
+(kit.parent / "TryOmarchyKit.json").write_text(kit_json)
 part = out / "factory/omarchy-aarch64-edge.img.zst.001"
 part.parent.mkdir(exist_ok=True)
 part.write_text("image")
@@ -106,6 +117,18 @@ manifest.parent.mkdir(parents=True, exist_ok=True)
 manifest.write_text(json.dumps({"parts": [{"url": url, "bytes": 5}]}))
 ''')
         builder.chmod(0o755)
+        kit_check = self.root / "tests/kit/check.sh"
+        kit_check.parent.mkdir(parents=True)
+        kit_check.write_text(f'#!{sys.executable}\n' + '''
+import os
+from pathlib import Path
+import sys
+root = Path(__file__).resolve().parents[2]
+(root / "dist/kit-check").write_text(" ".join([sys.argv[1], os.environ["KIT_TEAM_ID"], os.environ["KIT_NOTARIZED"]]))
+if os.environ.get("FAIL_KIT_CHECK"):
+    sys.exit("kit-check: Contents/MacOS/omarchy-vm-helper is signed by team OTHER, not TEST")
+''')
+        kit_check.chmod(0o755)
         self.git("init", "-q")
         self.git("config", "user.name", "Release Tests")
         self.git("config", "user.email", "release-tests@example.invalid")
@@ -182,6 +205,28 @@ manifest.write_text(json.dumps({"parts": [{"url": url, "bytes": 5}]}))
     def test_release_factory_download_points_at_its_own_assets(self) -> None:
         result = self.run_release(WRONG_FACTORY_URL="1")
         self.assert_failed(result, "the factory download does not point at v1.2.3")
+
+    def test_release_kit_matches_its_recorded_digest(self) -> None:
+        result = self.run_release(WRONG_KIT_DIGEST="0" * 64)
+        self.assert_failed(result, "the kit's recorded digest does not match")
+
+    def test_release_kit_manifest_names_the_release(self) -> None:
+        for version in ("v9.9.9", "development"):
+            with self.subTest(version=version):
+                result = self.run_release(WRONG_KIT_VERSION=version)
+                self.assert_failed(result, "the kit's manifest does not name v1.2.3")
+
+    def test_release_checks_the_kit_against_its_team(self) -> None:
+        result = self.run_release()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(f"{self.root.resolve() / 'dist/kit.noindex'} TEST 1",
+                         (self.root / "dist/kit-check").read_text())
+
+    def test_release_fails_when_the_kit_check_fails_and_keeps_its_tag(self) -> None:
+        result = self.run_release(FAIL_KIT_CHECK="1")
+        self.assert_failed(result, "is signed by team OTHER, not TEST")
+        self.assertIn("Retry with make release VERSION=v1.2.3", result.stderr)
+        self.assertEqual("tag", self.git("cat-file", "-t", "refs/tags/v1.2.3"))
 
     def test_release_requires_stable_dmg(self) -> None:
         for name in ("TryOmarchy-v1.2.3.dmg", "TryOmarchy-v1.2.2.dmg"):

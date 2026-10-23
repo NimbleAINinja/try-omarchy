@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Try Omarchy Settings
-Comment=Open the Try Omarchy Mac app settings
+Comment=Open the settings of the Mac app that runs this VM
 Exec=omarchy-native-settings
 TryExec=omarchy-native-settings
 Icon=/usr/share/pixmaps/omarchy.png

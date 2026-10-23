@@ -1,6 +1,7 @@
 import AVFoundation
 import Darwin
 import Foundation
+import TryOmarchyKitClient
 
 enum QEMUGPUStorageOption: String, Equatable {
     case ephemeral = "--ephemeral"
@@ -310,12 +311,13 @@ struct QEMUGPULaunchRequest: Equatable {
 
 enum QEMUGPULauncherPath {
     static let appName = "Try Omarchy.app"
+    static let kitName = TryOmarchyKit.bundleName
     static let launcherName = "run-qemu-gpu.sh"
 
     static func resolve(bundleURL: URL) throws -> URL {
         let standardizedBundle = bundleURL.standardizedFileURL
         var bundleInformation = stat()
-        guard standardizedBundle.lastPathComponent == appName,
+        guard [appName, kitName].contains(standardizedBundle.lastPathComponent),
               Darwin.lstat(standardizedBundle.path, &bundleInformation) == 0,
               bundleInformation.st_mode & S_IFMT == S_IFDIR else {
             throw HelperError.io("QEMU launch is available only from the built Omarchy app")
@@ -506,6 +508,15 @@ final class QEMUGPUProcessSupervisor: @unchecked Sendable {
     private var didReportVirtualMachineStart = false
     private var resetProgressStream: VMProgressStream<VMResetPhase>?
     private var launchProgressStream: VMProgressStream<VMLaunchPhase>?
+    private let standardInput: FileHandle
+    private let standardOutput: FileHandle
+
+    /// The run mode keeps its own standard input and output for its protocol,
+    /// so the launcher reads nothing and writes its output to standard error.
+    init(standardInput: FileHandle = .standardInput, standardOutput: FileHandle = .standardOutput) {
+        self.standardInput = standardInput
+        self.standardOutput = standardOutput
+    }
 
     func start(
         executableURL: URL,
@@ -519,8 +530,8 @@ final class QEMUGPUProcessSupervisor: @unchecked Sendable {
         process.executableURL = executableURL
         process.arguments = arguments
         process.environment = environment
-        process.standardInput = FileHandle.standardInput
-        process.standardOutput = FileHandle.standardOutput
+        process.standardInput = standardInput
+        process.standardOutput = standardOutput
         process.standardError = pipe
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             guard let self else {

@@ -69,6 +69,13 @@ fi
 # The nested-virtualization probe fails, as on M1/M2 Macs.
 [[ "\$*" == *"-qmp stdio"* ]] && exit 1
 printf '%s\n' "\$*" >>"$test_root/qemu-invocations"
+printf '%s -> %s\n' "\$0" "\$(readlink "\$0")" >>"$test_root/qemu-executables"
+info="\$(dirname "\$0")/../Info.plist"
+if [[ -f \$info ]]; then
+  for key in CFBundleExecutable CFBundleName CFBundleDisplayName CFBundlePackageType; do
+    printf '%s=%s\n' "\$key" "\$(/usr/bin/plutil -extract "\$key" raw -o - "\$info")" >>"$test_root/qemu-executables"
+  done
+fi
 exit 1
 SH
   chmod 755 "$resources/runtime/bin/Try Omarchy"
@@ -123,7 +130,7 @@ launch_env=()
 launch() { # args...
   env PATH="$shims:$PATH" OMARCHY_QEMU_GPU_STATE_ROOT="$state" OMARCHY_QEMU_GPU_DRY_RUN=1 \
     OMARCHY_QEMU_GPU_CPUS=4 OMARCHY_QEMU_GPU_MEMORY_MIB=2048 ${launch_env[@]+"${launch_env[@]}"} \
-    "$resources/scripts/run-qemu-gpu.sh" "$@" 2>&1 | sed 's/\\//g'
+    "$resources/scripts/run-qemu-gpu.sh" "$@" 2>&1 | LC_ALL=C sed 's/\\//g'
   return "${PIPESTATUS[0]}"
 }
 qemu_ran() {
@@ -236,6 +243,53 @@ assert_contains "$output" "ignoring unexpected display cutouts"
 assert_not_contains "$(grep "host settings:" <<<"$output")" "tryomarchy.display_cutouts"
 assert_not_contains "$(grep "host settings:" <<<"$output")" "ssh_from"
 
+# --- the window, the Dock and the menus follow the product -----------------------------
+assert_contains "$output" " -name guest=Try Omarchy "
+assert_contains "$output" "Product icon: none"
+printf 'icon' >"$resources/TryOmarchy.icns"
+printf 'icon' >"$test_root/Installer.icns"
+output=$(launch)
+assert_contains "$output" "Product icon: $resources/TryOmarchy.icns"
+output=$(OMARCHY_PRODUCT_NAME='Omarchy, Installer' OMARCHY_PRODUCT_ICON="$test_root/Installer.icns" launch)
+assert_contains "$output" "/product/Omarchy, Installer.app/Contents/MacOS/Omarchy, Installer -name guest=Omarchy,, Installer "
+assert_contains "$output" "Product icon: $test_root/Installer.icns"
+output=$(OMARCHY_PRODUCT_NAME='Omarchy/Installer' launch)
+assert_contains "$output" "$resources/runtime/bin/Try Omarchy -name guest=Omarchy/Installer "
+# 64 flags are 512 bytes, over the 255-byte limit for a file name.
+flags=$(printf '\xf0\x9f\x87\xa7\xf0\x9f\x87\xb7%.0s' {1..64})
+output=$(OMARCHY_PRODUCT_NAME=$flags launch)
+assert_contains "$output" "$resources/runtime/bin/Try Omarchy -name "
+assert_not_contains "$output" "/product/"
+# The bundle adds .app, so 252 bytes no longer fit.
+long_name=$(printf 'x%.0s' {1..252})
+output=$(OMARCHY_PRODUCT_NAME=$long_name launch)
+assert_contains "$output" "$resources/runtime/bin/Try Omarchy -name guest=$long_name "
+output=$(OMARCHY_PRODUCT_NAME='Omarchy & <Co>' launch)
+assert_contains "$output" "/product/Omarchy & <Co>.app/Contents/MacOS/Omarchy & <Co> -name "
+for icon in Installer.icns "$test_root/missing.icns" "$test_root"; do
+  output=$(OMARCHY_PRODUCT_ICON=$icon launch) && fail "the product icon $icon was accepted"
+  assert_contains "$output" "OMARCHY_PRODUCT_ICON must be the absolute path of an icon file"
+done
+for name in ' Omarchy' 'Omarchy ' $'Omarchy\nInstaller'; do
+  output=$(OMARCHY_PRODUCT_NAME=$name launch) && fail "the product name [$name] was accepted"
+  assert_contains "$output" "OMARCHY_PRODUCT_NAME must be a single-line name"
+done
+rm "$resources/TryOmarchy.icns"
+
+# --- an app without settings leaves the settings port out ----------------------------
+output=$(OMARCHY_QEMU_GPU_BRIDGES='clipboard authentication camera battery timezone' launch)
+assert_not_contains "$output" "dev.tryomarchy.settings"
+assert_contains "$output" "name=dev.tryomarchy.clipboard"
+output=$(OMARCHY_QEMU_GPU_BRIDGES='clipboard network' launch) && fail "an unknown bridge launched"
+assert_contains "$output" "OMARCHY_QEMU_GPU_BRIDGES names an unknown bridge: network"
+
+# --- a storage layout from a newer core is refused, not migrated --------------------
+cp "$state/shell/vm.json" "$test_root/vm.json"
+printf '{"format":2,"kind":"upstream-shell-vm"}\n' >"$state/shell/vm.json"
+output=$(launch) && fail "an unknown storage layout launched"
+assert_contains "$output" "this VM uses a storage layout this version does not know"
+mv "$test_root/vm.json" "$state/shell/vm.json"
+
 # --- the VM persists; the package offer can be turned off --------------------------
 printf 'guest data' | dd of="$state/shell/disk.img" conv=notrunc 2>/dev/null
 launch_env=(OMARCHY_SHELL_INSTALL_PACKAGE=)
@@ -272,10 +326,20 @@ assert_contains "$output" "run-qemu-gpu: QEMU exited before it was ready"
 [[ -d $alive ]] || fail "a live run directory was removed"
 work=$(sed -n 's/.*unix:\/tmp\/\(omarchy-qemu-gpu\.[A-Za-z0-9]*\)\/qmp.sock.*/\1/p' "$test_root/qemu-invocations" | head -1)
 [[ -n $work && ! -e /private/tmp/$work ]] || fail "the run directory was not removed"
-# A smaller size never shrinks the disk.
-launch_env=(OMARCHY_QEMU_GPU_DRY_RUN=0 OMARCHY_QEMU_GPU_DISK_GIB=1)
+[[ $(<"$test_root/qemu-executables") == "$resources/runtime/bin/Try Omarchy -> " ]] ||
+  fail "Try Omarchy did not start its QEMU directly"
+# A smaller size never shrinks the disk. Another product starts QEMU from an
+# app bundle with its name, which the Dock shows.
+: >"$test_root/qemu-executables"
+launch_env=(OMARCHY_QEMU_GPU_DRY_RUN=0 OMARCHY_QEMU_GPU_DISK_GIB=1 OMARCHY_PRODUCT_NAME='Omarchy Installer')
 launch >/dev/null && fail "the fake QEMU launch succeeded"
 [[ $(stat -f %z "$state/shell/disk.img") == 1073741824 ]] || fail "the disk changed size"
+product_start=$(head -1 "$test_root/qemu-executables")
+[[ $product_start =~ ^/private/tmp/omarchy-qemu-gpu\.[A-Za-z0-9]{6}/product/Omarchy\ Installer\.app/Contents/MacOS/Omarchy\ Installer\ -\>\ (.*)$ &&
+  ${BASH_REMATCH[1]} == "$resources/runtime/bin/Try Omarchy" ]] || fail "QEMU did not start under the product's name: $product_start"
+[[ $(tail -n +2 "$test_root/qemu-executables") == $'CFBundleExecutable=Omarchy Installer\nCFBundleName=Omarchy Installer\nCFBundleDisplayName=Omarchy Installer\nCFBundlePackageType=APPL' ]] ||
+  fail "the product's app bundle does not name the product"
+assert_contains "$(<"$test_root/qemu-invocations")" "-name guest=Omarchy Installer "
 : >"$test_root/qemu-invocations"
 
 # The lock refuses a second launch of the same VM.

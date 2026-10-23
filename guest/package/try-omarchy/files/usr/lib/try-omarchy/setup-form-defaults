@@ -1,0 +1,17 @@
+#!/bin/bash
+# Preselect Same as macOS in Omarchy's first-boot setup form.
+#
+# The form preselects OMARCHY_FORM_TIMEZONE_DEFAULT when it is set, and asks
+# geo.omarchy.org otherwise. omarchy-provision-owner.service runs this before
+# the form and reads the file it writes (drop-in 10-try-omarchy-native.conf).
+# Same as macOS is offered only while the guest follows the Mac and the Mac's
+# zone is valid in the guest, as in the timedatectl stand-in's list.
+
+environment=${TRY_OMARCHY_SETUP_FORM_ENV:-/run/try-omarchy/setup-form.env}
+timezone=${TRY_OMARCHY_TIMEZONE_COMMAND:-/usr/bin/try-omarchy-timezone}
+
+rm -f "$environment"
+label=$("$timezone" --mirror-label 2>/dev/null) || exit 0
+[[ $label == "Same as macOS" && $("$timezone" --mode 2>/dev/null) == follow ]] || exit 0
+mkdir -p "${environment%/*}"
+printf 'OMARCHY_FORM_TIMEZONE_DEFAULT="%s"\n' "$label" >"$environment"

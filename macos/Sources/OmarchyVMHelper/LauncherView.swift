@@ -89,15 +89,23 @@ struct LauncherView: View {
                 .accessibilityAddTraits(.isHeader)
             Spacer()
             if state.selectedPane != .home {
-                Button(action: actions.launchOrDone) {
-                    if state.isRunning {
-                        Text("Done")
-                    } else {
-                        Label(state.launchTitle, systemImage: "play.fill")
+                if state.launchInProgress {
+                    HStack(spacing: 8) {
+                        Text(state.launchStatus).foregroundStyle(.secondary)
+                        LaunchProgress(state: state, width: 80)
                     }
+                    .accessibilityElement(children: .combine)
+                } else {
+                    Button(action: actions.launchOrDone) {
+                        if state.isRunning {
+                            Text("Done")
+                        } else {
+                            Label("Launch Omarchy", systemImage: "play.fill")
+                        }
+                    }
+                    .disabled(!state.launchEnabled)
+                    .accessibilityIdentifier("toolbar-launch-button")
                 }
-                .disabled(!state.launchEnabled)
-                .accessibilityIdentifier("toolbar-launch-button")
             }
         }
         .padding(.horizontal, 28)
@@ -148,22 +156,26 @@ private struct LauncherSidebar: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 44) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(state.appVersionLabel)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .help(state.appVersionLabel)
-                    .accessibilityIdentifier("app-version")
-                Button(state.appReleaseActionTitle, action: actions.checkForUpdates)
-                    .buttonStyle(.link)
-                    .accessibilityIdentifier("app-release-check")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            if !state.runsInAnotherApp { appRelease }
         }
+    }
+
+    private var appRelease: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(state.appVersionLabel)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .help(state.appVersionLabel)
+                .accessibilityIdentifier("app-version")
+            Button(state.appReleaseActionTitle, action: actions.checkForUpdates)
+                .buttonStyle(.link)
+                .accessibilityIdentifier("app-release-check")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
     }
 
     private func row(_ pane: LauncherPane) -> some View {
@@ -192,7 +204,7 @@ private struct HomePane: View {
                     OmarchyAppTile(size: 104)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Try Omarchy")
+                        Text(state.productName)
                             .font(.system(size: 26, weight: .bold))
                             .accessibilityAddTraits(.isHeader)
                         status
@@ -295,10 +307,12 @@ private struct HomePane: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!state.launchEnabled)
                 .accessibilityIdentifier("launch-button")
-            Button("Restart Omarchy…", action: actions.restart)
-                .controlSize(.large)
-                .disabled(!state.runningActionsEnabled)
-                .accessibilityIdentifier("restart-vm-button")
+            if !state.runsInAnotherApp {
+                Button("Restart Omarchy…", action: actions.restart)
+                    .controlSize(.large)
+                    .disabled(!state.runningActionsEnabled)
+                    .accessibilityIdentifier("restart-vm-button")
+            }
             if state.canResetStorage {
                 Button("Shut Down…", action: actions.shutDown)
                     .controlSize(.large)
@@ -306,25 +320,56 @@ private struct HomePane: View {
                     .accessibilityIdentifier("manage-vm-button")
             }
             if state.shutdownInProgress { ProgressView().controlSize(.small) }
-        } else {
-            Button(action: actions.launchOrDone) {
-                Label(state.launchButtonTitle, systemImage: "play.fill")
-                    .padding(.horizontal, 8)
+        } else if state.launchInProgress {
+            // The hidden button keeps the card the same height as before the launch.
+            ZStack(alignment: .leading) {
+                launchButton.hidden()
+                LaunchProgress(state: state, width: 240)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.extraLarge)
-            .keyboardShortcut(state.launchInProgress || state.storageMoveInProgress ? nil : .defaultAction)
-            .disabled(!state.launchEnabled)
-            .accessibilityLabel(state.launchTitle)
-            .accessibilityIdentifier("launch-button")
+        } else {
+            launchButton
+                .keyboardShortcut(state.storageMoveInProgress ? nil : .defaultAction)
+                .disabled(!state.launchEnabled)
+                .accessibilityIdentifier("launch-button")
+        }
+    }
+
+    private var launchButton: some View {
+        Button(action: actions.launchOrDone) {
+            Label("Launch Omarchy", systemImage: "play.fill")
+                .padding(.horizontal, 8)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.extraLarge)
+    }
+}
+
+/// A bar with its measured amount while a launch step can be measured, and a
+/// spinner while it can't. The status line names the step.
+private struct LaunchProgress: View {
+    let state: LauncherState
+    let width: CGFloat
+
+    var body: some View {
+        HStack(spacing: 10) {
             if let fraction = state.launchFraction {
                 ProgressView(value: fraction)
-                    .frame(width: 120)
+                    .frame(width: width)
                     .accessibilityLabel(state.launchStatus)
-            } else if state.launchInProgress {
-                ProgressView().controlSize(.small)
+                    .accessibilityValue(state.launchCaption ?? "")
+                if let caption = state.launchCaption {
+                    Text(caption)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(state.launchStatus)
             }
         }
+        .accessibilityIdentifier("launch-progress")
     }
 }
 
@@ -501,7 +546,7 @@ private struct PermissionControl: View {
         } else if waiting {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("Waiting…").foregroundStyle(.secondary)
+                Text("Waiting").foregroundStyle(.secondary)
             }
         } else if let title = presentation.actionTitle {
             Button(title == "Open Settings" ? "Open Settings…" : title, action: action)
@@ -692,14 +737,16 @@ private struct StartupSection: View {
                 Button("Configure…", action: actions.configureKeyboard)
             }
 
-            SettingRow(
-                icon: SettingIcon("forward.fill", .orange),
-                title: "Skip Launcher",
-                detail: [state.isRunning
-                    ? "Launch Omarchy with your saved settings. Open settings anytime from Omarchy’s Setup menu."
-                    : "Launch Omarchy with your saved settings. Hold Option while opening the app to show the launcher."]
-            ) {
-                LauncherSwitch("Skip Launcher", isOn: state.startAutomatically, set: actions.setStartAutomatically)
+            if !state.runsInAnotherApp {
+                SettingRow(
+                    icon: SettingIcon("forward.fill", .orange),
+                    title: "Skip Launcher",
+                    detail: [state.isRunning
+                        ? "Launch Omarchy with your saved settings. Open settings anytime from Omarchy’s Setup menu."
+                        : "Launch Omarchy with your saved settings. Hold Option while opening the app to show the launcher."]
+                ) {
+                    LauncherSwitch("Skip Launcher", isOn: state.startAutomatically, set: actions.setStartAutomatically)
+                }
             }
         }
         .disabled(!state.settingsEnabled)
@@ -724,7 +771,9 @@ private struct ResetSection: View {
                     .accessibilityIdentifier("reset-settings-button")
             }
         } footer: {
-            SectionNote("To start over with a fresh Omarchy, delete the VM in Manage VMs.")
+            if !state.runsInAnotherApp {
+                SectionNote("To start over with a fresh Omarchy, delete the VM in Manage VMs.")
+            }
         }
     }
 }

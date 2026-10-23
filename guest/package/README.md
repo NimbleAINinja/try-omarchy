@@ -42,8 +42,9 @@ not ignore, so caches and other local files never reach the package.
   to this boot's `/run/try-omarchy/display-cutouts.json` (plain `aarch64` has
   no platform package). Nothing goes under `/usr/local`, `/usr/share/omarchy`
   or `/etc/skel`. Customisation uses
-  systemd drop-ins, presets and udev rules, rows in the user's Omarchy menu
-  extension, plus one loader in the user's Omarchy toggles directory.
+  systemd drop-ins, presets and udev rules, a libinput quirk for the pinch
+  touchpad, rows in the user's Omarchy menu extension, plus one loader in the
+  user's Omarchy toggles directory.
 - **No kernel command line from the host.** The guest owns its boot. The app
   passes its settings as the systemd credential `tryomarchy.host` (SMBIOS
   type 11): one line of `key=value` tokens. `try-omarchy-host-config.service` publishes them at
@@ -67,7 +68,8 @@ not ignore, so caches and other local files never reach the package.
   are replaced), so each changed row carries Omarchy's complete row, read from
   the installed Omarchy at every login, with our change applied. Rows still
   exactly as written follow Omarchy's later changes; rows the user edits or
-  removes are left alone.
+  removes are left alone. The settings row and its desktop entry, which the app
+  launcher hides, say Try Omarchy Settings in every app that runs the VM.
 
 ## Host interfaces
 
@@ -111,12 +113,11 @@ know about. Either side can therefore be updated first.
 
 ## Time zone
 
-`try-omarchy-timezone.service` follows the Mac's time zone. Omarchy's setup
-form lists `timedatectl list-timezones` and preselects `tzupdate -p`; the
-package's stand-ins for both in `/usr/lib/try-omarchy/shims`, on the setup
-service's `PATH` only, put **Same as macOS** first and preselect it, and send
-the choice to `try-omarchy-timezone --select`. **Same as macOS** follows the
-Mac; a named zone, there or later, is a fixed choice.
+`try-omarchy-timezone.service` follows the Mac's time zone.
+Omarchy's setup form lists `timedatectl list-timezones` and preselects `OMARCHY_FORM_TIMEZONE_DEFAULT`.
+The package's `timedatectl` stand-in in `/usr/lib/try-omarchy/shims`, on the setup service's `PATH` only, puts **Same as macOS** first and sends the choice to `try-omarchy-timezone --select`.
+The setup service's drop-in runs `/usr/lib/try-omarchy/setup-form-defaults` first, which sets that default to **Same as macOS** through `/run/try-omarchy/setup-form.env`.
+**Same as macOS** follows the Mac; a named zone, there or later, is a fixed choice.
 
 The package's menu extension changes the action of Omarchy's **Timezone**
 row (`update.timezone`). It opens `try-omarchy-timezone-menu`:

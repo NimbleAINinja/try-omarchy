@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Network
 
 /// The compressed factory image a release app downloads on first use instead
 /// of carrying it (`Resources/guest/download.json`, written by build-app.sh).
@@ -205,6 +206,7 @@ struct FactoryDownloadProgress: Equatable {
         case waiting
         case downloading
         case retrying
+        case paused
         case verifying
     }
 
@@ -219,10 +221,20 @@ struct FactoryDownloadProgress: Equatable {
 
     var title: String {
         switch phase {
-        case .waiting: "Waiting for another download…"
-        case .downloading: "Downloading Omarchy… \(percent)% of \(StorageLocationPolicy.format(bytes: totalBytes))"
-        case .retrying: "Reconnecting… \(percent)% downloaded"
-        case .verifying: "Verifying download…"
+        case .waiting: "Waiting for another download"
+        case .downloading: "Downloading Omarchy"
+        case .retrying: "Reconnecting"
+        case .paused: "Waiting for Wi-Fi or Ethernet"
+        case .verifying: "Verifying download"
+        }
+    }
+
+    var caption: String? {
+        switch phase {
+        case .downloading, .retrying, .paused:
+            String(format: "%.1f of ", Double(completedBytes) / 1_000_000_000)
+                + StorageLocationPolicy.format(bytes: totalBytes)
+        case .waiting, .verifying: nil
         }
     }
 }
@@ -266,6 +278,13 @@ enum FactoryDownloadError: LocalizedError, Equatable {
 /// download resumes; a damaged part is truncated away and fetched again. The
 /// image is renamed into place only after the whole-image digest matches.
 final class FactoryImageDownloader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    /// Whether the download may use a cellular or Low Data Mode connection.
+    /// On `.unmetered` it pauses while only such a connection is available.
+    enum NetworkPolicy: Sendable {
+        case any
+        case unmetered
+    }
+
     struct Policy {
         /// Waits between attempts that made no progress; one more failure
         /// than there are delays ends the download.
@@ -280,13 +299,16 @@ final class FactoryImageDownloader: NSObject, URLSessionDataDelegate, @unchecked
         /// it never fills the Mac's disk even if something else is using space.
         var minimumFreeBytes: Int64 = StorageSpaceRequirement.headroomBytes
         var lockPollInterval: TimeInterval = 0.5
+        var meteredPollInterval: TimeInterval = 2
     }
 
     let manifest: FactoryDownloadManifest
     let directory: URL
     /// Free space that must remain after the download, for decompressing it.
     let reserveBytes: Int64
+    let networkPolicy: NetworkPolicy
     private let policy: Policy
+    private let isNetworkMetered: () -> Bool
     private let configuration: URLSessionConfiguration
     private let freeBytes: (URL) -> Int64?
 
@@ -309,13 +331,21 @@ final class FactoryImageDownloader: NSObject, URLSessionDataDelegate, @unchecked
         manifest: FactoryDownloadManifest,
         directory: URL,
         reserveBytes: Int64,
+        networkPolicy: NetworkPolicy = .any,
         policy: Policy = Policy(),
         configuration: URLSessionConfiguration = .default,
-        freeBytes: @escaping (URL) -> Int64? = FactoryImageDownloader.availableBytes
+        freeBytes: @escaping (URL) -> Int64? = FactoryImageDownloader.availableBytes,
+        isNetworkMetered: (() -> Bool)? = nil
     ) {
         self.manifest = manifest
         self.directory = directory
         self.reserveBytes = reserveBytes
+        self.networkPolicy = networkPolicy
+        if networkPolicy == .unmetered {
+            self.isNetworkMetered = isNetworkMetered ?? MeteredNetworkMonitor().isMetered
+        } else {
+            self.isNetworkMetered = { false }
+        }
         self.policy = policy
         self.configuration = configuration
         self.freeBytes = freeBytes
@@ -395,6 +425,7 @@ final class FactoryImageDownloader: NSObject, URLSessionDataDelegate, @unchecked
             let part = manifest.parts[index]
             let start = try fileSize()
             if start < part.end {
+                try waitWhileMetered(completed: start)
                 report(.downloading, completed: start, force: true)
                 let result = try fetch(part, from: start, session: session)
                 if try fileSize() > start { failuresWithoutProgress = 0 }
@@ -490,6 +521,10 @@ final class FactoryImageDownloader: NSObject, URLSessionDataDelegate, @unchecked
         configuration.timeoutIntervalForRequest = policy.requestTimeout
         configuration.timeoutIntervalForResource = 7 * 24 * 60 * 60
         configuration.waitsForConnectivity = false
+        if networkPolicy == .unmetered {
+            configuration.allowsExpensiveNetworkAccess = false
+            configuration.allowsConstrainedNetworkAccess = false
+        }
         return configuration
     }
 
@@ -709,12 +744,23 @@ final class FactoryImageDownloader: NSObject, URLSessionDataDelegate, @unchecked
 
     private func retry(after failures: inout Int, reason: String) throws {
         try checkCancelled()
+        if isNetworkMetered() {
+            fputs("[download] \(reason) Waiting for an unmetered connection.\n", stderr)
+            return
+        }
         guard failures < policy.retryDelays.count else { throw FactoryDownloadError.connection(reason) }
         let delay = policy.retryDelays[failures]
         failures += 1
         fputs("[download] \(reason) Retrying in \(Int(delay)) s.\n", stderr)
         report(.retrying, completed: (try? fileSize()) ?? 0, force: true)
         try pause(delay)
+    }
+
+    private func waitWhileMetered(completed: Int64) throws {
+        while isNetworkMetered() {
+            report(.paused, completed: completed, force: true)
+            try pause(policy.meteredPollInterval)
+        }
     }
 
     private func pause(_ seconds: TimeInterval) throws {
@@ -763,4 +809,23 @@ struct ContentRange: Equatable {
         self.first = first
         self.last = last
     }
+}
+
+/// Whether the Mac's current connection is cellular or in Low Data Mode.
+final class MeteredNetworkMonitor: @unchecked Sendable {
+    private let monitor = NWPathMonitor()
+    private let lock = NSLock()
+    private var metered = false
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            self.lock.withLock { self.metered = path.status == .satisfied && (path.isExpensive || path.isConstrained) }
+        }
+        monitor.start(queue: DispatchQueue(label: "Try Omarchy network path"))
+    }
+
+    deinit { monitor.cancel() }
+
+    func isMetered() -> Bool { lock.withLock { metered } }
 }

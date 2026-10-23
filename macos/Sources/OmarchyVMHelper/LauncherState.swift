@@ -108,6 +108,11 @@ final class LauncherState {
     var keyboardRoutingIsDefault = true
     var startAutomatically = false
 
+    var productName = ProductName.defaultName
+    /// Another app runs the VM and owns starting, stopping and updates, so
+    /// only the settings remain.
+    var runsInAnotherApp = false
+
     var appVersionLabel = ""
     var appReleaseActionTitle = "Check for Updates…"
 
@@ -131,40 +136,25 @@ final class LauncherState {
         return isRunning || !launchInProgress
     }
 
-    var launchStatus: String { launchDownload?.title ?? launchProgress.title }
+    var launchStatus: String { launchDownload?.title ?? launchProgress.phase.title }
 
     /// How much of the current launch step is done, when it can be measured.
     var launchFraction: Double? {
         guard launchInProgress else { return nil }
         if let launchDownload {
             switch launchDownload.phase {
-            case .downloading, .retrying: return Double(launchDownload.percent) / 100
+            case .downloading, .retrying, .paused: return Double(launchDownload.percent) / 100
             case .waiting, .verifying: return nil
             }
         }
         return launchProgress.percent.map { Double($0) / 100 }
     }
 
-    var launchTitle: String {
-        if isRunning { return "Done" }
-        return launchInProgress ? launchStatus : "Launch Omarchy"
+    /// The measured amount beside the progress bar, such as "42%".
+    var launchCaption: String? {
+        guard launchInProgress else { return nil }
+        return launchDownload.map(\.caption) ?? launchProgress.caption
     }
-
-    /// One word for the Home button; the status line beside it has the detail.
-    var launchButtonTitle: String {
-        guard launchInProgress else { return "Launch Omarchy" }
-        switch launchDownload?.phase {
-        case .waiting, .downloading, .retrying: return "Downloading…"
-        case .verifying: return "Verifying…"
-        case nil: break
-        }
-        switch launchProgress.phase {
-        case .checking, .starting: return "Launching…"
-        case .verifying: return "Verifying…"
-        case .preparing, .finishing: return "Preparing…"
-        }
-    }
-
 
     var runningActionsEnabled: Bool { !controlsBusy && !permissionRequestInFlight }
 
@@ -233,7 +223,7 @@ final class LauncherState {
     ) -> LauncherStorageSummary {
         var lines = [path]
         if moving {
-            lines = ["Copying and verifying your VM… Original retained."]
+            lines = ["Copying and verifying your VM. Original retained."]
         } else if status.problem == nil, !status.isDefault {
             let volume = [status.volumeName, status.isExternal ? "External drive" : nil]
                 .compactMap { $0 }
