@@ -1,8 +1,9 @@
 #!/bin/bash
 #
 # Derives the kit from a built app: the bundle another app embeds to run the
-# VM through the helper's run mode (docs/installer-trial.md). It is the app
-# without its bridged-networking daemon, and it downloads its factory.
+# VM through the helper's run mode (docs/vm-kit.md). It downloads its factory,
+# and carries a bridged-networking daemon under its own service name that the
+# embedding app registers as itself.
 #
 #   macos/build-kit.sh --app APP --output DIR [--sign-identity IDENTITY]
 #
@@ -49,8 +50,7 @@ guest="$contents/Resources/guest"
 manifest="$output/TryOmarchyKit.json"
 rm -rf "$kit" "$archive" "$archive.sha256" "$manifest"
 ditto "$app" "$kit"
-rm -rf "$contents/_CodeSignature" "$contents/Library" "$contents/Resources/network" \
-  "$contents/MacOS/omarchy-network-daemon"
+rm -rf "$contents/_CodeSignature" "$contents/Library" "$contents/MacOS/omarchy-network-daemon"
 
 [[ -f $guest/download.json && ! -L $guest/download.json ]] ||
   fail "the app carries no factory download manifest; build it with --configuration production"
@@ -70,12 +70,41 @@ path.write_bytes(plistlib.dumps(value))
 PYTHON
 python3 "$repo_dir/scripts/kit_manifest.py" --root "$repo_dir" --app "$app" --output "$contents/Resources/kit.json"
 
-sign_options=(--force --sign "$sign_identity" --identifier dev.tryomarchy.kit
+payload_sign_options=(--force --sign "$sign_identity")
+[[ $sign_identity == - ]] || payload_sign_options+=(--options runtime --timestamp)
+sign_options=("${payload_sign_options[@]}" --identifier dev.tryomarchy.kit
   --entitlements "$macos_dir/omarchy-vm-helper.entitlements")
-[[ $sign_identity == - ]] || sign_options+=(--options runtime --timestamp)
+
+# The kit's own networking service, so an app that embeds it never shares the
+# full app's registration. The daemon pins the client and payloads it is
+# built with, so the embedding app must not re-sign them.
+network_service=dev.tryomarchy.kit.network
+network="$contents/Resources/network"
+network_daemon="$contents/MacOS/omarchy-network-daemon"
+network_build=$(mktemp -d /private/tmp/omarchy-kit-network.XXXXXX)
+trap 'rm -rf "$network_build"' EXIT
+OMARCHY_NETWORK_SERVICE_NAME=$network_service bash "$macos_dir/network-helper/build.sh" "$network_build"
+install -m 0755 "$network_build/omarchy-network-client" "$network/omarchy-network-client"
+for network_binary in socket_vmnet omarchy-network-supervisor omarchy-network-client; do
+  codesign "${payload_sign_options[@]}" "$network/$network_binary"
+done
+OMARCHY_NETWORK_SERVICE_NAME=$network_service \
+  bash "$macos_dir/network-helper/build-daemon.sh" "$network_daemon" "$contents/Resources"
+codesign "${payload_sign_options[@]}" "$network_daemon"
+python3 - "$macos_dir/network-helper/dev.tryomarchy.network.plist" "$network/launchd.plist" \
+  "$network_service" "${network_daemon#"$kit/"}" <<'PYTHON'
+import plistlib, sys
+from pathlib import Path
+source, destination, service, program = sys.argv[1:]
+value = plistlib.loads(Path(source).read_bytes())
+value.update(Label=service, MachServices={service: True}, BundleProgram=program)
+Path(destination).write_bytes(plistlib.dumps(value))
+PYTHON
+
 codesign "${sign_options[@]}" "$contents/MacOS/omarchy-vm-helper"
 codesign "${sign_options[@]}" "$kit"
 codesign --verify --deep --strict "$kit"
+[[ $("$network_daemon" check) == "$network_service" ]] || fail "the kit's networking daemon rejects its runtime"
 
 # The kit's launcher must accept the factory it describes.
 OMARCHY_QEMU_GPU_INSPECT_ONLY=1 "$contents/Resources/scripts/run-qemu-gpu.sh" >/dev/null ||
