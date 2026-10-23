@@ -413,6 +413,8 @@ represent the requested zoom exactly, the helper selects the nearest supported
 scale with integral logical dimensions. Explicit per-output monitor rules still
 take precedence over the helper's catch-all rule.
 
+A resizable window keeps its size, and the guest follows it. The window never goes below the guest's smallest mode, 800x600 pixels. The guest image fills the window on both axes, so the pointer and the guest's cursor map each axis on its own, and stay aligned while the guest's mode catches up with the window.
+
 On a MacBook with a camera notch, full screen covers the whole panel, the
 strip beside the housing included, and the guest describes the housing to
 Omarchy's bar through Omarchy's own `display-cutouts.json`, so the bar sits
