@@ -184,7 +184,7 @@ app: guest runtime firmware
 	  --root "$(ROOT)" --state-dir "$(BUILD_STATE)" app -- \
 	  "$(ROOT)/macos/build-app.sh" --guest-dir "$(GUEST_DIST)"
 
-# The kit other apps embed (docs/installer-trial.md): a production build that
+# The kit other apps embed (docs/vm-kit.md): a production build that
 # downloads its factory, from HEAD's release unless FACTORY_DOWNLOAD_URL is set.
 KIT_SIGN_IDENTITY ?= -
 FACTORY_DOWNLOAD_URL ?=
