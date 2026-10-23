@@ -48,7 +48,7 @@ Shut Down, quitting the app and closing the Omarchy window shut Omarchy down ove
 
 ### Settings
 
-The one app has no settings page of its own. Settings live in the kit: the launcher window Try Omarchy has today, with its sharing, network, virtual machine and storage sections. The run mode serves the settings bridge, so Omarchy's Setup menu keeps its settings row, and choosing it opens the kit's launcher window beside the Omarchy window, named after the one app. Changes apply at the next start, as in Try Omarchy.
+The one app has no settings page of its own. Settings live in the kit: the launcher window Try Omarchy has today, with its sharing, network, virtual machine and storage sections. The run mode serves the settings bridge, so Omarchy's Setup menu keeps its settings row, Try Omarchy Settings, and choosing it opens the kit's launcher window beside the Omarchy window, named after the one app. Changes apply at the next start, as in Try Omarchy.
 
 The run mode reads the same stored settings the launcher writes, so memory and CPUs, networking, port forwarding, the shared folder and USB devices all take effect in Try without the one app knowing them. The run-mode configuration keeps only what the app knows: the product name, the default folder and the optional bridges.
 

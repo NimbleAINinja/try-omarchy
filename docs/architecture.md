@@ -100,9 +100,7 @@ per-boot settings as the systemd credential `tryomarchy.host` over SMBIOS
 type 11: one line of tokens such as `tryomarchy.keyboard=jis`,
 `tryomarchy.locale=ja_JP.UTF-8`, `tryomarchy.timezone=Asia/Tokyo`,
 `tryomarchy.ssh_access=1`, `omarchy.shared_folder_name=<base64url>` and the
-VirGL flags. An app other than Try Omarchy that runs the VM adds
-`tryomarchy.product_name=<base64url>`, and the guest names its Setup menu's
-settings row after it. In the guest, `try-omarchy-host-config.service` publishes that
+VirGL flags. In the guest, `try-omarchy-host-config.service` publishes that
 line at `/run/try-omarchy/cmdline`, which the package's units and scripts
 read. systemd imports credentials natively and they have no length limit.
 
