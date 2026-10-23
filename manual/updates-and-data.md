@@ -23,6 +23,8 @@ To manage it, shut down Omarchy and open **Manage…** in the launcher's **Virtu
 - **create** a separate VM in an empty folder;
 - **delete** the VM. It goes to the Trash, so **Put Back** undoes it.
 
+Each VM keeps its settings in its own folder, so they move with it, and switching to another VM switches to its settings.
+
 The VM's drive must be APFS. Don't unplug an external drive while Omarchy is running.
 
 ## Resources
@@ -35,7 +37,7 @@ Set CPU cores, memory and the maximum disk size in **Resources → Configure…*
 ## Starting over
 
 - **Reset settings:** **Virtual Machine → Reset Settings…** returns every setting to its default. The VM is not touched.
-- **Fresh Omarchy:** delete the VM in **Manage VMs**. The next launch creates a new one from the latest image.
+- **Fresh Omarchy:** delete the VM in **Manage VMs**. The next launch creates a new one from the latest image, with default settings.
 
 ## VMs from older versions
 

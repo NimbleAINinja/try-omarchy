@@ -106,6 +106,11 @@ final class LauncherState {
     var usesNotch = true
     var startAutomatically = false
 
+    var productName = ProductName.defaultName
+    /// Another app runs the VM and owns starting, stopping and updates, so
+    /// only the settings remain.
+    var runsInAnotherApp = false
+
     var appVersionLabel = ""
     var appReleaseActionTitle = "Check for Updates…"
 
@@ -136,7 +141,7 @@ final class LauncherState {
         guard launchInProgress else { return nil }
         if let launchDownload {
             switch launchDownload.phase {
-            case .downloading, .retrying: return Double(launchDownload.percent) / 100
+            case .downloading, .retrying, .paused: return Double(launchDownload.percent) / 100
             case .waiting, .verifying: return nil
             }
         }

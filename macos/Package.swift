@@ -6,10 +6,12 @@ let package = Package(
     platforms: [.macOS("15.0")],
     products: [
         .executable(name: "omarchy-vm-helper", targets: ["OmarchyVMHelper"]),
+        .library(name: "TryOmarchyKitClient", targets: ["TryOmarchyKitClient"]),
     ],
     targets: [
-        .executableTarget(name: "OmarchyVMHelper"),
-        .testTarget(name: "OmarchyVMHelperTests", dependencies: ["OmarchyVMHelper"]),
+        .target(name: "TryOmarchyKitClient", swiftSettings: [.swiftLanguageMode(.v6)]),
+        .executableTarget(name: "OmarchyVMHelper", dependencies: ["TryOmarchyKitClient"]),
+        .testTarget(name: "OmarchyVMHelperTests", dependencies: ["OmarchyVMHelper", "TryOmarchyKitClient"]),
     ],
     swiftLanguageModes: [.v5]
 )

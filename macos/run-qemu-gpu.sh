@@ -185,6 +185,12 @@ open_storage() {
   disk="$vm_dir/disk.img"
   vars="$vm_dir/efi-vars.fd"
   metadata="$vm_dir/vm.json"
+  # Another app's newer core may have written a layout this one does not know.
+  # It refuses that VM rather than migrating it.
+  if [[ -f $metadata && ! -L $metadata ]]; then
+    layout=$(/usr/bin/plutil -extract format raw -o - "$metadata" 2>/dev/null) || layout=1
+    [[ $layout == 1 ]] || fail "this VM uses a storage layout this version does not know; update the app"
+  fi
 }
 
 reset_vm() {
@@ -216,6 +222,34 @@ for device in hda-micro intel-hda virtconsole virtserialport virtio-balloon-pci 
   virtio-serial-pci virtio-tablet-pci virtio-pinch-pci qemu-xhci usb-kbd; do
   require_qemu_device "$device"
 done
+
+# --- bridges -----------------------------------------------------------------
+# Audio and the guest status always run. The app that starts the VM chooses
+# the others; without settings the guest has no settings port, so Omarchy's
+# Setup menu shows no row for an app that cannot open them.
+enabled_bridges=${OMARCHY_QEMU_GPU_BRIDGES-clipboard authentication camera battery timezone settings}
+for bridge in $enabled_bridges; do
+  case $bridge in
+    clipboard | authentication | camera | battery | timezone | settings) ;;
+    *) fail "OMARCHY_QEMU_GPU_BRIDGES names an unknown bridge: $bridge" ;;
+  esac
+done
+bridge_enabled() { [[ " $enabled_bridges " == *" $1 "* ]]; }
+
+# --- product -----------------------------------------------------------------
+# QEMU owns the Omarchy window, so its Dock entry, icon and menus name the app
+# that runs the VM: Try Omarchy, or the app that embeds the kit.
+product_name=${OMARCHY_PRODUCT_NAME:-Try Omarchy}
+[[ ${#product_name} -le 1024 && $product_name != *[[:cntrl:]]* && $product_name =~ ^[^[:space:]](.*[^[:space:]])?$ ]] ||
+  fail "OMARCHY_PRODUCT_NAME must be a single-line name without surrounding spaces"
+unset TRYOMARCHY_PRODUCT_ICON
+if [[ -n ${OMARCHY_PRODUCT_ICON:-} ]]; then
+  [[ $OMARCHY_PRODUCT_ICON == /* && $OMARCHY_PRODUCT_ICON != *[[:cntrl:]]* && -f $OMARCHY_PRODUCT_ICON ]] ||
+    fail "OMARCHY_PRODUCT_ICON must be the absolute path of an icon file"
+  export TRYOMARCHY_PRODUCT_ICON=$OMARCHY_PRODUCT_ICON
+elif [[ -f $resources_dir/TryOmarchy.icns ]]; then
+  export TRYOMARCHY_PRODUCT_ICON="$resources_dir/TryOmarchy.icns"
+fi
 
 # --- resources ---------------------------------------------------------------
 host_cpu_count=$(sysctl -n hw.logicalcpu)
@@ -549,6 +583,31 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# The Dock names a process without an app bundle after its resolved file, so
+# QEMU starts from a bundle named after the product whose executable links to
+# the signed binary. The binary keeps its path, so the bridges still recognise
+# it. A name that cannot be a file name starts QEMU under the binary's own name.
+make_product_app() { # app
+  local plist="$1/Contents/Info.plist"
+  mkdir -p "$1/Contents/MacOS" &&
+    ln -s "$qemu_bin" "$1/Contents/MacOS/$product_name" &&
+    /usr/bin/plutil -create xml1 "$plist" &&
+    /usr/bin/plutil -insert CFBundleExecutable -string "$product_name" "$plist" &&
+    /usr/bin/plutil -insert CFBundleName -string "$product_name" "$plist" &&
+    /usr/bin/plutil -insert CFBundleDisplayName -string "$product_name" "$plist" &&
+    /usr/bin/plutil -insert CFBundlePackageType -string APPL "$plist"
+}
+qemu_exec=$qemu_bin
+case $product_name in
+  "${qemu_bin##*/}" | */* | . | ..) ;;
+  *)
+    product_app="$work_dir/product/$product_name.app"
+    if (($(printf '%s' "$product_name" | wc -c) <= 251)) && make_product_app "$product_app" 2>/dev/null; then
+      qemu_exec="$product_app/Contents/MacOS/$product_name"
+    fi
+    ;;
+esac
+
 socket_dir="/tmp/${work_dir##*/}"
 
 if [[ $storage_mode == ephemeral ]]; then
@@ -643,7 +702,7 @@ audio_output_frequency=$(host_audio_frequency output "${OMARCHY_SDL_OUTPUT_DEVIC
 audio_input_frequency=$(host_audio_frequency input "${OMARCHY_SDL_INPUT_DEVICE_NAME:-}") || audio_input_frequency=48000
 
 qemu_args=(
-  -name 'Try Omarchy'
+  -name "guest=${product_name//,/,,}"
   -machine "$qemu_machine"
   "${qemu_accel[@]}"
   -cpu 'host,pmu=off'
@@ -687,13 +746,17 @@ qemu_args=(
   -device 'virtserialport,bus=omarchy-serial.0,nr=4,chardev=omarchy-camera-bridge,name=dev.tryomarchy.camera'
   -chardev "socket,id=omarchy-guest-status,path=$guest_socket,server=on,wait=off"
   -device 'virtserialport,bus=omarchy-serial.0,nr=5,chardev=omarchy-guest-status,name=dev.tryomarchy.guest'
-  -chardev "socket,id=omarchy-settings-bridge,path=$settings_socket,server=on,wait=off"
-  -device 'virtserialport,bus=omarchy-serial.0,nr=6,chardev=omarchy-settings-bridge,name=dev.tryomarchy.settings'
   -chardev "socket,id=omarchy-battery-bridge,path=$battery_socket,server=on,wait=off"
   -device 'virtserialport,bus=omarchy-serial.0,nr=7,chardev=omarchy-battery-bridge,name=dev.tryomarchy.battery'
   -chardev "socket,id=omarchy-timezone-bridge,path=$timezone_socket,server=on,wait=off"
   -device 'virtserialport,bus=omarchy-serial.0,nr=8,chardev=omarchy-timezone-bridge,name=dev.tryomarchy.timezone'
 )
+if bridge_enabled settings; then
+  qemu_args+=(
+    -chardev "socket,id=omarchy-settings-bridge,path=$settings_socket,server=on,wait=off"
+    -device 'virtserialport,bus=omarchy-serial.0,nr=6,chardev=omarchy-settings-bridge,name=dev.tryomarchy.settings'
+  )
+fi
 
 if [[ -n $package_to_install ]]; then
   qemu_args+=(
@@ -730,9 +793,10 @@ export OMARCHY_SDL_AUDIO_CONTROL_DIRECTORY="$audio_routes"
 
 if ((dry_run)); then
   printf '[qemu-gpu] dry-run command:' >&2
-  printf ' %q' "$qemu_bin" "${qemu_args[@]}" >&2
+  printf ' %q' "$qemu_exec" "${qemu_args[@]}" >&2
   printf '\n[qemu-gpu] host settings: %s\n' "$host_options" >&2
   printf '[qemu-gpu] Caps Lock input: %s\n' "${TRYOMARCHY_CAPS_LOCK:-caps-lock}" >&2
+  printf '[qemu-gpu] Product icon: %s\n' "${TRYOMARCHY_PRODUCT_ICON:-none}" >&2
   exit 0
 fi
 
@@ -746,12 +810,12 @@ echo "[qemu-gpu] Port forwarding: $port_forwarding_summary" >&2
 [[ -z $shared_folder ]] || echo "[qemu-gpu] Shared folder: $shared_folder (guest ~/$shared_folder_name)" >&2
 [[ -z $previous_disk ]] || echo "[qemu-gpu] Previous VM attached read-only: $previous_disk" >&2
 echo '[qemu-gpu] Launch phase: starting' >&2
-"$qemu_bin" "${qemu_args[@]}" &
+"$qemu_exec" "${qemu_args[@]}" &
 qemu_pid=$!
 printf '%s\n' "$qemu_pid" >"$work_dir/.qemu.pid"
 
 for ((attempt = 0; attempt < 200; attempt++)); do
-  [[ -S $qmp_socket && -S $guest_socket && -S $settings_socket ]] && break
+  [[ -S $qmp_socket && -S $guest_socket ]] && { ! bridge_enabled settings || [[ -S $settings_socket ]]; } && break
   kill -0 "$qemu_pid" 2>/dev/null || fail "QEMU exited before it was ready"
   sleep 0.05
 done
@@ -765,8 +829,13 @@ echo "[qemu-gpu] Ready. QMP: $qmp_socket" >&2
 # feature stays unavailable for the rest of the session.
 status_file="$vm_dir/guest-status.json"
 [[ $storage_mode == persistent ]] || status_file="$work_dir/guest-status.json"
-bridge_names=(audio clipboard authentication camera battery timezone guest-status)
-bridge_restarts=(0 0 0 0 0 0 0)
+bridge_names=(audio)
+for bridge in clipboard authentication camera battery timezone; do
+  bridge_enabled "$bridge" && bridge_names+=("$bridge")
+done
+bridge_names+=(guest-status)
+bridge_restarts=()
+for _ in "${bridge_names[@]}"; do bridge_restarts+=(0); done
 start_bridge() { # index
   case ${bridge_names[$1]} in
     audio) "$native_bridge" --bridge-native-audio "$qemu_pid" "$audio_socket" "$audio_routes" 9>&- & ;;

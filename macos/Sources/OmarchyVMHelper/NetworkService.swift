@@ -3,7 +3,8 @@ import ServiceManagement
 
 @MainActor
 enum NetworkService {
-    static let service = SMAppService.daemon(plistName: "dev.tryomarchy.network.plist")
+    static let service = SMAppService.daemon(plistName: NetworkServiceLayout.fullAppJobName)
+    private static var layout: NetworkServiceLayout { NetworkServiceLayout(bundle: .main) }
 
     static var statusText: String {
         switch service.status {
@@ -17,8 +18,7 @@ enum NetworkService {
 
     static func prepare() throws {
         if service.status == .notRegistered || service.status == .notFound {
-            let plist = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/LaunchDaemons/dev.tryomarchy.network.plist")
-            guard FileManager.default.fileExists(atPath: plist.path) else {
+            guard layout.registration == .thisApp else {
                 throw HelperError.io("Networking helper is missing from this app.")
             }
             do { try service.register() } catch {
@@ -38,18 +38,10 @@ enum NetworkService {
     }
 
     static func verifyConnection() throws {
-        guard let resources = Bundle.main.resourceURL else { throw HelperError.io("Networking helper is missing from this app.") }
-        let process = Process()
-        process.executableURL = resources.appendingPathComponent("network/omarchy-network-client")
-        process.arguments = ["check", resources.path]
-        let errors = Pipe()
-        process.standardError = errors
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let detail = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Networking helper did not respond."
-            throw HelperError.io(detail.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let client = layout.client, let resources = layout.resources else {
+            throw HelperError.io("Networking helper is missing from this app.")
         }
+        if let problem = NetworkServiceCheck.run(client: client, resources: resources) { throw HelperError.io(problem) }
     }
 
     static func remove() async throws {
@@ -73,5 +65,45 @@ enum NetworkService {
         }
         try prepare()
         try verify()
+    }
+}
+
+/// The networking helper as the settings window shows it. The full app sets
+/// it up and removes it; under another app the window only reports what the
+/// start found, because that app registers the helper as itself.
+struct NetworkServiceControls {
+    let status: @MainActor () -> String
+    let isReady: @MainActor () -> Bool
+    let repair: (@MainActor () async throws -> Void)?
+    let remove: (@MainActor () async throws -> Void)?
+
+    static var thisApp: Self {
+        Self(status: { NetworkService.statusText },
+             isReady: { NetworkService.service.status == .enabled },
+             repair: { try await NetworkService.repair() },
+             remove: { try await NetworkService.remove() })
+    }
+
+    /// `started` is what this start found; `current` what the daemon says
+    /// now, once asked again. Both are read each time the window shows them.
+    static func forRunMode(layout: NetworkServiceLayout, productName: String,
+                           started: @escaping @MainActor () -> BridgedNetworkAvailability?,
+                           current: @escaping @MainActor () -> BridgedNetworkAvailability?) -> Self {
+        if layout.registration == .thisApp { return .thisApp }
+        let embedded = layout.registration == .embeddingApp
+        @MainActor func state() -> (status: String, ready: Bool) {
+            guard embedded else { return ("Bridged networking is not available in \(productName).", false) }
+            switch current() ?? started() {
+            case .available:
+                return started() == .available
+                    ? ("Networking helper ready", true)
+                    : ("Networking helper ready. Omarchy uses it from the next start.", true)
+            case .unavailable(let reason):
+                return (reason, false)
+            case nil:
+                return ("\(productName) sets up the networking helper. Until macOS approves it, Omarchy starts with shared networking.", false)
+            }
+        }
+        return Self(status: { state().status }, isReady: { state().ready }, repair: nil, remove: nil)
     }
 }

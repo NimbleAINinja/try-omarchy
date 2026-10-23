@@ -22,6 +22,8 @@ struct StartMenuWindowChromeTests {
         #expect(window.appearance == nil)
         #expect(window.contentMinSize == StartMenuWindowChrome.minimumContentSize)
         #expect(!window.isReleasedWhenClosed)
+        StartMenuWindowChrome.apply(to: window, title: "Omarchy Installer")
+        #expect(window.title == "Omarchy Installer")
         window.close()
 
         let editor = PortForwardingEditor(mappings: [], save: { _ in nil })

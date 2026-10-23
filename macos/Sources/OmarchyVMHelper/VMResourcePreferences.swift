@@ -93,24 +93,28 @@ struct VMResourcePreferenceStore {
     static let key = "vmResourcePreferences"
     static let schemaVersion = 1
 
-    private let defaults: UserDefaults
+    private let storage: any LauncherSettingsStorage
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    init(storage: any LauncherSettingsStorage) {
+        self.storage = storage
+    }
+
+    init(defaults: UserDefaults) {
+        self.init(storage: defaults)
     }
 
     func load() -> VMResources? {
         // Adopt #82's saved memory only until the first Resources save. Keep
         // the original preference untouched, including on a smaller host.
-        if defaults.object(forKey: Self.key) == nil,
-           defaults.object(forKey: MemoryPreferenceStore.key) != nil {
-            let memoryMiB = MemoryPreferenceStore(defaults: defaults).load().memoryMiB
+        if storage.settingData(forKey: Self.key) == nil,
+           storage.settingData(forKey: MemoryPreferenceStore.key) != nil {
+            let memoryMiB = MemoryPreferenceStore(storage: storage).load().memoryMiB
             return VMResources(
                 cpuCount: 8,
                 memoryGiB: memoryMiB % 1024 == 0 ? memoryMiB / 1024 : 0
             )
         }
-        guard let data = defaults.data(forKey: Self.key),
+        guard let data = storage.settingData(forKey: Self.key),
               let payload = try? JSONDecoder().decode(Payload.self, from: data),
               payload.schemaVersion == Self.schemaVersion else { return nil }
         return payload.resources
@@ -119,14 +123,14 @@ struct VMResourcePreferenceStore {
     /// Back to the host defaults, including the older memory-only preference
     /// that `load()` would otherwise adopt again.
     func clear() {
-        defaults.removeObject(forKey: Self.key)
-        defaults.removeObject(forKey: MemoryPreferenceStore.key)
+        try? storage.removeSetting(forKey: Self.key)
+        try? storage.removeSetting(forKey: MemoryPreferenceStore.key)
     }
 
     func save(_ resources: VMResources) {
         let payload = Payload(schemaVersion: Self.schemaVersion, resources: resources)
         guard let data = try? JSONEncoder().encode(payload) else { return }
-        defaults.set(data, forKey: Self.key)
+        try? storage.setSettingData(data, forKey: Self.key)
     }
 
     private struct Payload: Codable {

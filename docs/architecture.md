@@ -34,6 +34,16 @@ of the factory disk and starts QEMU. QEMU's Cocoa input layer uses the shared
 Accessibility grant to capture system-wide Command chords and deliver Command
 as guest Super. Swift does not replace QEMU or run the Omarchy desktop itself.
 
+The launcher runs the VM through a session that the helper's headless run mode
+shares: the image download, the launch script, QMP readiness, Mac sleep and the
+exit. Another app embeds the same core as a kit and starts the run mode (see
+[the VM kit and run mode](vm-kit.md)).
+
+The launcher's settings are versioned files, not app preferences: the VM's
+settings in its storage folder, and the choice of folder under
+`~/Library/Application Support/Try Omarchy`. The full app and the run mode read
+the same files, whichever app identity runs the kit.
+
 QEMU presents the hardware that Linux expects: CPUs, memory, storage, networking,
 graphics, audio, keyboard, and pointer devices. Because both the Mac and the
 guest are ARM64, Apple Hypervisor Framework runs the guest CPU instructions on
@@ -210,13 +220,13 @@ host credential as `omarchy.shared_folder_name=<base64url>`.
 The personal share uses `cache=readahead`, which omits 9p writeback caching.
 See [shared-folder safety](shared-folder-safety.md).
 
-Optional port mappings are stored as a versioned launcher preference, validated
+Optional port mappings are stored as a versioned launcher setting, validated
 again at every Swift-to-shell boundary, and translated into QEMU user-network
 `hostfwd` rules. The host side is always bound explicitly to `127.0.0.1`; the
 launcher never creates wildcard or LAN-facing listeners. TCP and UDP occupy
 separate host-port namespaces, matching QEMU's socket behavior.
 
-**Add SSH** inserts an ordinary `tcp:2222:22` mapping into that same preference;
+**Add SSH** inserts an ordinary `tcp:2222:22` mapping into that same setting;
 there is no second SSH forwarding store or QEMU argument path. After the shell
 parser accepts the complete mapping list, any TCP rule targeting guest port 22
 also adds the fixed `tryomarchy.ssh_access=1` host setting. UDP port 22 and
@@ -362,6 +372,8 @@ Back can restore it. Failures never fall back to permanent removal.
 - `macos/` builds the Swift launcher, a patched QEMU runtime, and stages the
   edk2 firmware. The runtime is isolated, relocated, and signed before it
   enters the app bundle.
+- `make kit` derives the kit other apps embed from a production app, in
+  `dist/kit.noindex/`.
 - `dist/` is the only public output directory. It is generated and ignored by
   Git.
 
@@ -398,6 +410,8 @@ absent setting uses the live EDID's pixel density. If a resized display cannot
 represent the requested zoom exactly, the helper selects the nearest supported
 scale with integral logical dimensions. Explicit per-output monitor rules still
 take precedence over the helper's catch-all rule.
+
+A resizable window keeps its size, and the guest follows it. The window never goes below the guest's smallest mode, 800x600 pixels. The guest image fills the window on both axes, so the pointer and the guest's cursor map each axis on its own, and stay aligned while the guest's mode catches up with the window.
 
 On a MacBook with a camera notch, full screen covers the whole panel, the
 strip beside the housing included, and the guest describes the housing to

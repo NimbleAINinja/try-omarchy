@@ -27,3 +27,5 @@ How Try Omarchy works, for contributors. User guides are in the [manual](../manu
 - [Runtime validation](runtime-validation.md)
 - [Releasing](releasing.md)
 - [Shell plan](shell-plan.md): the design record behind the move to stock Omarchy
+- [One app plan](one-app.md): Omarchy Installer as the one app, with Install and Try modes, on the kit this repository builds
+- [The VM kit and run mode](vm-kit.md): how another app embeds and runs the VM

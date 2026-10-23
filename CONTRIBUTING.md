@@ -7,13 +7,14 @@ Try Omarchy runs stock Omarchy on an Apple Silicon Mac and bridges it to macOS. 
 1. **Don't modify Omarchy.** The guest is a stock `aarch64` Omarchy install. We never edit, fork, pin or replace Omarchy or its packages.
 2. **Do the minimum.** Change only what Omarchy needs to work well in a VM on a Mac. If a change would also make sense on real hardware, it belongs upstream.
 3. **Two places.** Everything inside the guest is one package, `try-omarchy`. Everything on the Mac is the app and its VM runtime.
-4. **Independent updates.**
+4. **Shells all the way down.** Try is a shell for Omarchy, and [Omarchy Installer](https://github.com/omacom/omarchy-mac-installer) is a shell for Try. This repository is the source of Try: the kit, the client that starts it and the guest package. The installer embeds and fetches the kit and adds nothing of its own to the VM, so Try updates without an installer release ([one app plan](docs/one-app.md)).
+5. **Independent updates.**
    - Omarchy updates itself, at any time.
    - The app updates from releases, and brings a newer `try-omarchy` package with it.
 
    No version may assume another one moved with it. The app and the package must work with each other's older and newer versions.
-5. **Follow Omarchy's channel.** The image uses `edge`, the only channel Omarchy publishes for ARM today. It moves to `stable` when Omarchy releases its Mac image there.
-6. **Fix upstream when you can.** Report bugs to Omarchy, its packages, QEMU or VirGL. Carry a local fix only until upstream has its own.
+6. **Follow Omarchy's channel.** The image uses `edge`, the only channel Omarchy publishes for ARM today. It moves to `stable` when Omarchy releases its Mac image there.
+7. **Fix upstream when you can.** Report bugs to Omarchy, its packages, QEMU or VirGL. Carry a local fix only until upstream has its own.
 
 ## Where things belong
 
@@ -64,10 +65,13 @@ make help        # every target
 
 | Level | Where | Covers |
 | --- | --- | --- |
-| `make test` | Any Mac, and CI on macOS 15 and 26 | Unit and contract tests. CI also builds the runtime |
+| `make test` | Any Mac, and CI on macOS 15 and 26 | Unit and contract tests, and the run mode started as a real process with a launcher that runs no VM (`run-mode.test.sh`) |
+| Build | CI on macOS 15 and 26 | The runtime (`make runtime`), and the kit built from it and checked with `make test-kit` |
 | Guest checks | CI on Linux | The package on today's Omarchy: install, upgrade, and the desktop on a virtual display |
 | Nightly | CI on Linux | The same guest checks on a fresh image from live Omarchy, which catches upstream changes early |
 | `make e2e` | An Apple Silicon Mac | The real VM, which CI cannot boot: the GPU, the bridges, the shared folder, a second boot |
+
+Every mechanism ships with its check in CI. A PR that adds a build step, a protocol, a file format or a script adds a CI check for it. CI covers everything that can be checked without booting the VM. `make e2e` is the only exception, and the PR says whether it ran.
 
 Run `make e2e` before opening a PR that changes the app, the VM or the bridges. Tests check behaviour, never pixels or timing.
 

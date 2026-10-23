@@ -10,11 +10,40 @@ bash "$root/build.sh" "$output"
 mkdir -p "$output/Contents/Resources/network" "$output/Contents/MacOS"
 cp "$output/socket_vmnet" "$output/omarchy-network-supervisor" "$output/omarchy-network-client" "$output/Contents/Resources/network/"
 codesign --force --sign - "$output/Contents/Resources/network/omarchy-network-client"
-bash "$root/build-daemon.sh" "$output/Contents"
-if "$output/Contents/MacOS/omarchy-network-daemon"; then
+daemon="$output/Contents/MacOS/omarchy-network-daemon"
+OMARCHY_NETWORK_SERVICE_NAME=dev.tryomarchy.test.network \
+  bash "$root/build-daemon.sh" "$daemon" "$output/Contents/Resources"
+if "$daemon"; then
   echo 'network-helper.test: daemon accepted an unprivileged launch' >&2
   exit 1
 fi
+refuses() {
+  if "$daemon" check 2>/dev/null; then
+    echo "network-helper.test: the daemon's check accepted $1" >&2
+    exit 1
+  fi
+}
+refuses 'a runtime without the helper beside it'
+install -m 0755 /usr/bin/true "$output/Contents/MacOS/omarchy-vm-helper"
+[[ $("$daemon" check) == dev.tryomarchy.test.network ]] || {
+  echo 'network-helper.test: the daemon did not accept the runtime it was built with' >&2
+  exit 1
+}
+cp "$output/Contents/Resources/network/omarchy-network-client" "$output/client.signed"
+codesign --force --sign - --identifier dev.tryomarchy.resigned "$output/Contents/Resources/network/omarchy-network-client"
+refuses 'a re-signed client'
+cp "$output/client.signed" "$output/Contents/Resources/network/omarchy-network-client"
+cp "$output/Contents/Resources/network/socket_vmnet" "$output/server.built"
+printf x >>"$output/Contents/Resources/network/socket_vmnet"
+refuses 'a changed server'
+cp "$output/server.built" "$output/Contents/Resources/network/socket_vmnet"
+"$daemon" check >/dev/null
+mv "$output/Contents/Resources" "$output/resources.moved"
+if "$daemon" check 2>"$output/check.err" || ! grep -q 'network runtime is not at' "$output/check.err"; then
+  echo 'network-helper.test: the daemon did not say its network runtime is missing' >&2
+  exit 1
+fi
+mv "$output/resources.moved" "$output/Contents/Resources"
 "$output/stream-test"
 /usr/bin/clang -Wall -Wextra -Werror -mmacosx-version-min=15.0 -DVERSION='"test"' \
   -framework vmnet "$root/recovery.test.c" "$root/vendor/cli.c" -o "$output/recovery-test"

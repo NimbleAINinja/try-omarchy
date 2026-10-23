@@ -446,6 +446,14 @@ class MenuEntries(unittest.TestCase):
         created = other / ".config/omarchy/extensions/omarchy-menu.jsonc"
         self.assertIn("setup.try-omarchy", self.parse(created.read_text()))
 
+    def test_the_settings_row_and_desktop_entry_say_try_omarchy(self):
+        self.entries()
+        self.assertEqual(self.parse(self.menu.read_text())["setup.try-omarchy"]["label"], "Try Omarchy Settings")
+        entry = configparser.ConfigParser(interpolation=None)
+        entry.optionxform = str
+        entry.read(FILES / "usr/share/applications/try-omarchy-settings.desktop")
+        self.assertEqual(entry["Desktop Entry"]["Name"], "Try Omarchy Settings")
+
 
 class IdleDefaults(unittest.TestCase):
     STOCK = '{\n  "idle": {\n    "screensaver": 150,\n    "lock": 300\n  },\n  "bar": {\n    "position": "top"\n  }\n}\n'

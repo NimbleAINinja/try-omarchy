@@ -98,15 +98,19 @@ struct PortForwardingPreferenceStore {
     static let key = "portForwardingPreferences"
     static let schemaVersion = 1
 
-    private let defaults: UserDefaults
+    private let storage: any LauncherSettingsStorage
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    init(storage: any LauncherSettingsStorage) {
+        self.storage = storage
+    }
+
+    init(defaults: UserDefaults) {
+        self.init(storage: defaults)
     }
 
     /// Unknown, malformed, or policy-invalid data fails closed to no mappings.
     func load() -> [PortForwardMapping] {
-        guard let data = defaults.data(forKey: Self.key),
+        guard let data = storage.settingData(forKey: Self.key),
               let payload = try? JSONDecoder().decode(Payload.self, from: data),
               payload.schemaVersion == Self.schemaVersion,
               (try? PortForwardPolicy.validate(payload.mappings)) != nil else {
@@ -119,7 +123,7 @@ struct PortForwardingPreferenceStore {
     func save(_ mappings: [PortForwardMapping]) throws {
         try PortForwardPolicy.validate(mappings)
         let payload = Payload(schemaVersion: Self.schemaVersion, mappings: mappings)
-        defaults.set(try JSONEncoder().encode(payload), forKey: Self.key)
+        try storage.setSettingData(JSONEncoder().encode(payload), forKey: Self.key)
     }
 
     private struct Payload: Codable {

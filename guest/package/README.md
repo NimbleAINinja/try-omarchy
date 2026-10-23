@@ -68,7 +68,8 @@ not ignore, so caches and other local files never reach the package.
   are replaced), so each changed row carries Omarchy's complete row, read from
   the installed Omarchy at every login, with our change applied. Rows still
   exactly as written follow Omarchy's later changes; rows the user edits or
-  removes are left alone.
+  removes are left alone. The settings row and its desktop entry, which the app
+  launcher hides, say Try Omarchy Settings in every app that runs the VM.
 
 ## Host interfaces
 

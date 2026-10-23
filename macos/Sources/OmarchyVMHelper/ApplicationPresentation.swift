@@ -88,7 +88,8 @@ enum ApplicationPresentation {
     static func installMainMenu(
         in application: NSApplication,
         applicationName: String,
-        actionsTarget: AnyObject? = nil
+        actionsTarget: AnyObject? = nil,
+        includesAppCommands: Bool = true
     ) {
         let mainMenu = NSMenu(title: "Main Menu")
 
@@ -102,17 +103,19 @@ enum ApplicationPresentation {
             keyEquivalent: ""
         )
         applicationMenu.addItem(.separator())
-        applicationMenu.addItem(
-            withTitle: "Settings…",
-            action: #selector(VMApplicationController.showSettings(_:)),
-            keyEquivalent: ","
-        ).target = actionsTarget
-        applicationMenu.addItem(
-            withTitle: "Check for Updates…",
-            action: #selector(VMApplicationController.checkForAppUpdates(_:)),
-            keyEquivalent: ""
-        ).target = actionsTarget
-        applicationMenu.addItem(.separator())
+        if includesAppCommands {
+            applicationMenu.addItem(
+                withTitle: "Settings…",
+                action: #selector(VMApplicationController.showSettings(_:)),
+                keyEquivalent: ","
+            ).target = actionsTarget
+            applicationMenu.addItem(
+                withTitle: "Check for Updates…",
+                action: #selector(VMApplicationController.checkForAppUpdates(_:)),
+                keyEquivalent: ""
+            ).target = actionsTarget
+            applicationMenu.addItem(.separator())
+        }
         let servicesItem = applicationMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
         let servicesMenu = NSMenu(title: "Services")
         servicesItem.submenu = servicesMenu
@@ -175,6 +178,11 @@ enum ApplicationPresentation {
             keyEquivalent: ""
         )
 
+        application.mainMenu = mainMenu
+        application.servicesMenu = servicesMenu
+        application.windowsMenu = windowMenu
+        guard includesAppCommands else { return }
+
         let helpItem = NSMenuItem()
         mainMenu.addItem(helpItem)
         let helpMenu = NSMenu(title: "Help")
@@ -188,10 +196,6 @@ enum ApplicationPresentation {
             item.tag = link.rawValue
             item.target = actionsTarget
         }
-
-        application.mainMenu = mainMenu
-        application.servicesMenu = servicesMenu
-        application.windowsMenu = windowMenu
         application.helpMenu = helpMenu
     }
 }

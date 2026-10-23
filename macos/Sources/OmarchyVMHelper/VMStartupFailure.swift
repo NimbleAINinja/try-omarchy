@@ -4,7 +4,7 @@ import Foundation
 /// launcher's diagnostic visible so an ordinary retry does not require a reset
 /// or an unexplained reinstall.
 enum VMStartupFailure {
-    static func message(status: Int32, standardError: String) -> String {
+    static func message(status: Int32, standardError: String, otherApp: String = "Omarchy Installer") -> String {
         if standardError.contains("run-qemu-gpu: the installed app is damaged or has an invalid code signature") {
             return "The installed app failed its code-signature check. Replace it with a freshly built or downloaded copy, then try again. Replacing the app keeps your saved VM."
         }
@@ -15,6 +15,9 @@ enum VMStartupFailure {
         let lines = standardError.components(separatedBy: .newlines)
         let explanation = lines.last {
             $0.hasPrefix("run-qemu-gpu: ")
+        }
+        if explanation == "run-qemu-gpu: this VM is already open" {
+            return "Omarchy is already open in another app, such as \(otherApp). Shut it down there, then start it again here."
         }
         let diagnostic = String((explanation ?? standardError).suffix(1_800))
             .unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\t" }

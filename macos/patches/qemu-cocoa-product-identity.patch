@@ -1,55 +1,74 @@
 From: Try Omarchy contributors
-Subject: [PATCH] cocoa: present the VM as Try Omarchy on macOS
+Subject: [PATCH] cocoa: present the VM as the app that runs it on macOS
 
 Applies after startergo/homebrew-qemu-virgl-kosmickrisp v1.0.27.
 
 QEMU owns the visible Cocoa window, so macOS gives its process the Dock entry
-instead of the accessory launcher app. Publish the product process name before
-NSApplication is created, load the signed app icon from the enclosing bundle,
-and use the product name in QEMU's Cocoa window and application menu.
+instead of the launcher app. Name the process, the window and the application
+menu after -name, which the launcher sets to the product (Try Omarchy, or the
+app that embeds its kit). Load the icon from TRYOMARCHY_PRODUCT_ICON, or else
+the signed app icon of the bundle that holds the real executable.
 
 diff --git a/ui/cocoa.m b/ui/cocoa.m
 --- a/ui/cocoa.m
 +++ b/ui/cocoa.m
-@@ -1197,7 +1197,7 @@
+@@ -286,6 +286,13 @@
+         bql_unlock();
+     }
+     return val;
++}
++
++static NSString *cocoa_product_name(void)
++{
++    NSString *name = qemu_name ? [NSString stringWithUTF8String:qemu_name] : nil;
++
++    return [name length] ? name : @"Try Omarchy";
+ }
+ 
+ static int cocoa_keycode_to_linux(int keycode)
+@@ -1214,10 +1221,7 @@
+ {
      COCOA_DEBUG("QemuCocoaView: grabMouse\n");
  
-     if (qemu_name)
+-    if (qemu_name)
 -        [[self window] setTitle:[NSString stringWithFormat:@"QEMU %s - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)", qemu_name]];
-+        [[self window] setTitle:[NSString stringWithFormat:@"%s - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)", qemu_name]];
-     else
-         [[self window] setTitle:@"QEMU - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)"];
+-    else
+-        [[self window] setTitle:@"QEMU - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)"];
++    [[self window] setTitle:[NSString stringWithFormat:@"%@ - (Press  " UC_CTRL_KEY " " UC_ALT_KEY " G  to release Mouse)", cocoa_product_name()]];
      [self hideCursor];
-@@ -1210,7 +1210,7 @@
+     CGAssociateMouseAndMouseCursorPosition(isAbsoluteEnabled);
+     isMouseGrabbed = TRUE; // while isMouseGrabbed = TRUE, QemuCocoaApp sends all events to [cocoaView handleEvent:]
+@@ -1227,10 +1231,7 @@
+ {
      COCOA_DEBUG("QemuCocoaView: ungrabMouse\n");
  
-     if (qemu_name)
+-    if (qemu_name)
 -        [[self window] setTitle:[NSString stringWithFormat:@"QEMU %s", qemu_name]];
-+        [[self window] setTitle:[NSString stringWithUTF8String:qemu_name]];
-     else
-         [[self window] setTitle:@"QEMU"];
+-    else
+-        [[self window] setTitle:@"QEMU"];
++    [[self window] setTitle:cocoa_product_name()];
      [self unhideCursor];
-@@ -1327,7 +1327,9 @@
+     CGAssociateMouseAndMouseCursorPosition(TRUE);
+     isMouseGrabbed = FALSE;
+@@ -1345,7 +1346,7 @@
          }
          [window setAcceptsMouseMovedEvents:YES];
          [window setCollectionBehavior:NSWindowCollectionBehaviorFullScreenPrimary];
 -        [window setTitle:qemu_name ? [NSString stringWithFormat:@"QEMU %s", qemu_name] : @"QEMU"];
-+        [window setTitle:qemu_name
-+            ? [NSString stringWithUTF8String:qemu_name]
-+            : @"QEMU"];
++        [window setTitle:cocoa_product_name()];
          [window setContentView:cocoaView];
          [window makeKeyAndOrderFront:self];
          [window center];
-@@ -1651,7 +1653,7 @@
+@@ -1667,7 +1668,7 @@
  {
      NSAlert *alert = [NSAlert new];
      [alert autorelease];
 -    [alert setMessageText: @"Are you sure you want to quit QEMU?"];
-+    [alert setMessageText: @"Are you sure you want to quit Try Omarchy?"];
++    [alert setMessageText: [NSString stringWithFormat:@"Are you sure you want to quit %@?", cocoa_product_name()]];
      [alert addButtonWithTitle: @"Cancel"];
      [alert addButtonWithTitle: @"Quit"];
      if([alert runModal] == NSAlertSecondButtonReturn) {
-@@ -1665,20 +1667,16 @@
+@@ -1681,20 +1682,16 @@
  - (IBAction) do_about_menu_item: (id) sender
  {
      NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -72,64 +91,71 @@ diff --git a/ui/cocoa.m b/ui/cocoa.m
      } else {
          options = @{
              NSAboutPanelOptionApplicationVersion : version,
-@@ -1745,17 +1743,17 @@
+@@ -1761,17 +1758,17 @@
  
      // Application menu
      menu = [[NSMenu alloc] initWithTitle:@""];
 -    [menu addItemWithTitle:@"About QEMU" action:@selector(do_about_menu_item:) keyEquivalent:@""]; // About QEMU
-+    [menu addItemWithTitle:@"About Try Omarchy" action:@selector(do_about_menu_item:) keyEquivalent:@""];
++    [menu addItemWithTitle:[@"About " stringByAppendingString:cocoa_product_name()] action:@selector(do_about_menu_item:) keyEquivalent:@""];
      [menu addItem:[NSMenuItem separatorItem]]; //Separator
      menuItem = [menu addItemWithTitle:@"Services" action:nil keyEquivalent:@""];
      [menuItem setSubmenu:[NSApp servicesMenu]];
      [menu addItem:[NSMenuItem separatorItem]];
 -    [menu addItemWithTitle:@"Hide QEMU" action:@selector(hide:) keyEquivalent:@"h"]; //Hide QEMU
-+    [menu addItemWithTitle:@"Hide Try Omarchy" action:@selector(hide:) keyEquivalent:@"h"];
++    [menu addItemWithTitle:[@"Hide " stringByAppendingString:cocoa_product_name()] action:@selector(hide:) keyEquivalent:@"h"];
      menuItem = (NSMenuItem *)[menu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"]; // Hide Others
      [menuItem setKeyEquivalentModifierMask:(NSEventModifierFlagOption|NSEventModifierFlagCommand)];
      [menu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""]; // Show All
      [menu addItem:[NSMenuItem separatorItem]]; //Separator
 -    [menu addItemWithTitle:@"Quit QEMU" action:@selector(terminate:) keyEquivalent:@"q"];
-+    [menu addItemWithTitle:@"Quit Try Omarchy" action:@selector(terminate:) keyEquivalent:@"q"];
++    [menu addItemWithTitle:[@"Quit " stringByAppendingString:cocoa_product_name()] action:@selector(terminate:) keyEquivalent:@"q"];
      menuItem = [[NSMenuItem alloc] initWithTitle:@"Apple" action:nil keyEquivalent:@""];
      [menuItem setSubmenu:menu];
      [[NSApp mainMenu] addItem:menuItem];
-@@ -2421,7 +2419,31 @@
-     assert(o->type == DISPLAY_TYPE_COCOA);
-     if (o->has_gl && o->gl) {
-         display_opengl = 1;
-+    }
-+}
-+
+@@ -2433,6 +2430,38 @@
+     }
+ }
+ 
 +static void cocoa_set_product_icon(void)
 +{
-+    NSArray *arguments = [[NSProcessInfo processInfo] arguments];
++    const char *configured = getenv("TRYOMARCHY_PRODUCT_ICON");
++    NSString *iconPath = nil;
 +
-+    if ([arguments count] == 0) {
-+        return;
-     }
++    if (configured && configured[0] == '/') {
++        iconPath = [NSString stringWithUTF8String:configured];
++    } else {
++        NSArray *arguments = [[NSProcessInfo processInfo] arguments];
 +
-+    NSString *executablePath =
-+        [[arguments objectAtIndex:0] stringByStandardizingPath];
-+    NSString *resourcesPath =
-+        [[[executablePath stringByDeletingLastPathComponent]
-+          stringByDeletingLastPathComponent]
-+         stringByDeletingLastPathComponent];
-+    NSString *iconPath =
-+        [resourcesPath stringByAppendingPathComponent:@"TryOmarchy.icns"];
-+    NSImage *icon = [[NSImage alloc] initWithContentsOfFile:iconPath];
++        if ([arguments count] == 0) {
++            return;
++        }
++
++        NSString *executablePath =
++            [[arguments objectAtIndex:0] stringByResolvingSymlinksInPath];
++        NSString *resourcesPath =
++            [[[executablePath stringByDeletingLastPathComponent]
++              stringByDeletingLastPathComponent]
++             stringByDeletingLastPathComponent];
++        iconPath =
++            [resourcesPath stringByAppendingPathComponent:@"TryOmarchy.icns"];
++    }
++
++    NSImage *icon = iconPath ? [[NSImage alloc] initWithContentsOfFile:iconPath] : nil;
 +
 +    if (icon) {
 +        [NSApp setApplicationIconImage:icon];
 +        [icon release];
 +    }
- }
- 
++}
++
  static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
-@@ -2436,7 +2458,9 @@
+ {
+     NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
+@@ -2445,7 +2474,9 @@
      ProcessSerialNumber psn = { 0, kCurrentProcess };
      TransformProcessType(&psn, kProcessTransformToForegroundApplication);
  
-+    [[NSProcessInfo processInfo] setProcessName:@"Try Omarchy"];
++    [[NSProcessInfo processInfo] setProcessName:cocoa_product_name()];
      [QemuApplication sharedApplication];
 +    cocoa_set_product_icon();
  
