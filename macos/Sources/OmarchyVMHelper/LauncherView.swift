@@ -156,22 +156,26 @@ private struct LauncherSidebar: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: 44) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(state.appVersionLabel)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .help(state.appVersionLabel)
-                    .accessibilityIdentifier("app-version")
-                Button(state.appReleaseActionTitle, action: actions.checkForUpdates)
-                    .buttonStyle(.link)
-                    .accessibilityIdentifier("app-release-check")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            if !state.runsInAnotherApp { appRelease }
         }
+    }
+
+    private var appRelease: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(state.appVersionLabel)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .help(state.appVersionLabel)
+                .accessibilityIdentifier("app-version")
+            Button(state.appReleaseActionTitle, action: actions.checkForUpdates)
+                .buttonStyle(.link)
+                .accessibilityIdentifier("app-release-check")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
     }
 
     private func row(_ pane: LauncherPane) -> some View {
@@ -200,7 +204,7 @@ private struct HomePane: View {
                     OmarchyAppTile(size: 104)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Try Omarchy")
+                        Text(state.productName)
                             .font(.system(size: 26, weight: .bold))
                             .accessibilityAddTraits(.isHeader)
                         status
@@ -303,10 +307,12 @@ private struct HomePane: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(!state.launchEnabled)
                 .accessibilityIdentifier("launch-button")
-            Button("Restart Omarchy…", action: actions.restart)
-                .controlSize(.large)
-                .disabled(!state.runningActionsEnabled)
-                .accessibilityIdentifier("restart-vm-button")
+            if !state.runsInAnotherApp {
+                Button("Restart Omarchy…", action: actions.restart)
+                    .controlSize(.large)
+                    .disabled(!state.runningActionsEnabled)
+                    .accessibilityIdentifier("restart-vm-button")
+            }
             if state.canResetStorage {
                 Button("Shut Down…", action: actions.shutDown)
                     .controlSize(.large)
@@ -730,14 +736,16 @@ private struct StartupSection: View {
                 }
             }
 
-            SettingRow(
-                icon: SettingIcon("forward.fill", .orange),
-                title: "Skip Launcher",
-                detail: [state.isRunning
-                    ? "Launch Omarchy with your saved settings. Open settings anytime from Omarchy’s Setup menu."
-                    : "Launch Omarchy with your saved settings. Hold Option while opening the app to show the launcher."]
-            ) {
-                LauncherSwitch("Skip Launcher", isOn: state.startAutomatically, set: actions.setStartAutomatically)
+            if !state.runsInAnotherApp {
+                SettingRow(
+                    icon: SettingIcon("forward.fill", .orange),
+                    title: "Skip Launcher",
+                    detail: [state.isRunning
+                        ? "Launch Omarchy with your saved settings. Open settings anytime from Omarchy’s Setup menu."
+                        : "Launch Omarchy with your saved settings. Hold Option while opening the app to show the launcher."]
+                ) {
+                    LauncherSwitch("Skip Launcher", isOn: state.startAutomatically, set: actions.setStartAutomatically)
+                }
             }
         }
         .disabled(!state.settingsEnabled)
@@ -762,7 +770,9 @@ private struct ResetSection: View {
                     .accessibilityIdentifier("reset-settings-button")
             }
         } footer: {
-            SectionNote("To start over with a fresh Omarchy, delete the VM in Manage VMs.")
+            if !state.runsInAnotherApp {
+                SectionNote("To start over with a fresh Omarchy, delete the VM in Manage VMs.")
+            }
         }
     }
 }

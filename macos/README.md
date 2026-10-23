@@ -15,7 +15,8 @@ make runtime   # macos/.build/qemu-gpu-runtime
 make firmware  # macos/.build/firmware (edk2-aarch64-code.fd and its license)
 make app       # dist/app.noindex/Try Omarchy.app
 make run
-make package   # signed and notarized dist/TryOmarchy.dmg
+make package   # signed and notarized dist/TryOmarchy.dmg and the kit
+make kit       # dist/kit.noindex/TryOmarchyKit.zip, ad-hoc signed (docs/vm-kit.md)
 make release   # prompt for version, tag, and build a signed/notarized DMG
 make release VERSION=vX.Y.Z  # explicit version without prompting
 make test
@@ -110,11 +111,11 @@ ignored.
 
 **Virtual Machine → Reset Settings…** asks once, then returns every launcher
 setting (resources, networking, port forwarding, shared folder, USB device,
-audio routing, Immersive Mode, Camera Notch, Skip launcher) to its default. It
-keeps the VM, the selected VM folder, and permission choices. Starting over
-from the factory is **Manage… → Delete VM…**, described below. The next launch
-prepares a new disk if needed, with its button showing checking, image
-preparation, setup, and startup phases.
+audio routing, Immersive Mode, Camera Notch, Dictation, Skip launcher) to its
+default. It keeps the VM, the selected VM folder, and permission choices.
+Starting over from the factory is **Manage… → Delete VM…**, described below.
+The next launch prepares a new disk if needed, with its button showing
+checking, image preparation, setup, and startup phases.
 Phase changes come from the launcher process and are also announced to VoiceOver.
 
 The launcher's **Selected VM → Manage…** sheet shows the current selection,
@@ -144,9 +145,22 @@ errors never fall back to deletion. In the default folder the next launch
 creates a fresh VM; a custom folder must be replaced by another VM or an empty
 folder.
 
-The choice is stored in `UserDefaults` and published to the launcher as
-`OMARCHY_QEMU_GPU_STATE_ROOT`. An inherited value still wins and disables
-location changes in the launcher.
+The choice is stored in the versioned `storage-location.json` file in
+`~/Library/Application Support/Try Omarchy`, outside any VM, and published to
+the launcher as `OMARCHY_QEMU_GPU_STATE_ROOT`. An inherited value still wins
+and disables location changes in the launcher.
+
+The VM's other settings (resources, networking, port forwarding, the shared
+folder, the USB device, Immersive Mode, the camera notch and Dictation) are
+stored in the versioned `settings.json` file at the workspace's root
+(`LauncherSettingsFile.swift`), so they move and are deleted with the VM, and
+the run mode reads them under any app's identity
+([VM kit](../docs/vm-kit.md#settings)). Both files are private and ignored when
+they are not; an unreadable folder choice stops the launch rather than
+opening the default folder. Until the launcher has marked a new workspace, and
+for audio devices, settings stay in `UserDefaults`. Each older `UserDefaults`
+value moves into the files the first time a file lacks it, except into a
+workspace set by `OMARCHY_QEMU_GPU_STATE_ROOT`.
 
 **Skip launcher** is stored in the versioned `launcher-settings.json` file at
 that workspace's root (normally `~/Library/Application Support/Try Omarchy/VM/v1`).
@@ -174,7 +188,7 @@ A disposable session clones the same file into its own temporary folder
 are not APFS, not owned by the user, or too broad, before it touches them.
 
 The Resources editor stores CPU count, RAM, and an optional maximum disk capacity in the versioned
-`vmResourcePreferences` UserDefaults value. Until the first save, it adopts the
+`vmResourcePreferences` setting. Until the first save, it adopts the
 existing `memoryPreferences` choice without rewriting it. CPU choices range
 from 4 through all host cores. Memory recommends 8 GiB on hosts with at least
 16 GiB. Choices start at 4/6/8 GiB and continue in 4 GiB steps, keeping at least

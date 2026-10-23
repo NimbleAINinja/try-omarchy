@@ -29,8 +29,10 @@ jobs:
         uses: actions/checkout@v4
 
       # This compiles the Swift product and runs the native, shell, and guest
-      # contract suites. The full build additionally requires privileged ARM64
-      # Docker, which is unavailable on GitHub-hosted macOS runners.
+      # contract suites, including the run mode started as a real process
+      # (macos/Tests/run-mode.test.sh). The full build additionally requires
+      # privileged ARM64 Docker, which is unavailable on GitHub-hosted macOS
+      # runners.
       - name: Run test suite
         if: matrix.target == 'test'
         run: make test
@@ -44,6 +46,22 @@ jobs:
       - name: Build and verify native runtime
         if: matrix.target == 'runtime'
         run: make runtime
+
+      # The kit from this runtime, the way make kit builds it, but from a
+      # stand-in for dist/guest: the factory needs privileged ARM64 Docker,
+      # and a kit carries only the image's download manifest. make test-kit
+      # checks the archive and digest, the signature of every Mach-O, that the
+      # kit has no bundle identity, QEMU starting with its libraries, kit.json,
+      # the bridged-networking runtime and its pins, the launcher's
+      # self-check, and the run mode of the kit's own helper.
+      - name: Build and check the kit
+        if: matrix.target == 'runtime'
+        run: |
+          python3 tests/kit/fixture-guest.py "$RUNNER_TEMP/guest"
+          make firmware
+          macos/build-app.sh --configuration production --kit --guest-dir "$RUNNER_TEMP/guest" \
+            --sign-identity - --factory-download-url https://ci.invalid/
+          make test-kit
 
   # The guest package on Linux, the way a guest runs it: its tests on GNU
   # tools, its shell scripts, and its contracts with the Omarchy the factory

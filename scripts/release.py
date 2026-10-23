@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import subprocess
 import sys
 
 from app_version import build_version
+import kit_manifest
 
 
 VERSION = re.compile(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -117,6 +119,25 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
     if not dmg.is_file():
         raise ValueError(f"release DMG was not produced: {dmg}")
 
+    # Installers pin the kit by this digest.
+    kit = root / "dist/kit.noindex/TryOmarchyKit.zip"
+    try:
+        recorded = (kit.parent / f"{kit.name}.sha256").read_text().split()[0]
+        actual = hashlib.sha256(kit.read_bytes()).hexdigest()
+    except (OSError, IndexError) as error:
+        raise ValueError(f"release kit was not produced: {error}") from error
+    if recorded != actual:
+        raise ValueError(f"the kit's recorded digest does not match {kit}")
+
+    # Installers compare kits by this version before and after downloading one.
+    try:
+        published = kit_manifest.read(kit.parent / "TryOmarchyKit.json")
+        bundled = kit_manifest.read(kit.parent / "TryOmarchyKit.bundle/Contents/Resources/kit.json")
+    except (OSError, ValueError) as error:
+        raise ValueError(f"the kit has no valid manifest: {error}") from error
+    if published != bundled or published["version"] != tag:
+        raise ValueError(f"the kit's manifest does not name {tag}")
+
     # The app downloads its factory from this release's assets.
     try:
         manifest = json.loads((app / "Contents/Resources/guest/download.json").read_text())
@@ -133,8 +154,17 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
             raise ValueError(f"factory release asset is missing: {asset}")
 
 
+def check_kit(root: Path, identity: str) -> None:
+    """The published kit: every Mach-O signed by the release's team, notarized and stapled, and working."""
+    team = re.search(r"\(([A-Z0-9]+)\)$", identity)
+    environment = dict(os.environ, KIT_TEAM_ID=team[1] if team else "", KIT_NOTARIZED="1")
+    subprocess.run([str(root / "tests/kit/check.sh"), str(root / "dist/kit.noindex")], env=environment, check=True)
+
+
 def release_assets(root: Path) -> list[Path]:
-    return [root / "dist/TryOmarchy.dmg", *sorted((root / "dist/factory").glob("*"))]
+    kit = root / "dist/kit.noindex"
+    return [root / "dist/TryOmarchy.dmg", kit / "TryOmarchyKit.zip", kit / "TryOmarchyKit.zip.sha256",
+            kit / "TryOmarchyKit.json", *sorted((root / "dist/factory").glob("*"))]
 
 
 def prepare_factory(root: Path, make: str, force: bool) -> None:
@@ -187,11 +217,12 @@ def release(root: Path, make: str) -> None:
         if not version or version["TryOmarchyBuildDescribe"] != tag:
             raise ValueError(f"app version does not resolve to {tag}; check the tags on HEAD")
         subprocess.run([
-            str(root / "macos/build-app.sh"), "--configuration", "production", "--dmg",
+            str(root / "macos/build-app.sh"), "--configuration", "production", "--dmg", "--kit",
             "--guest-dir", str(root / "dist/guest"),
             "--sign-identity", identity, "--notarize-profile", profile,
         ], cwd=root, check=True)
         verify_release_artifacts(root, tag)
+        check_kit(root, identity)
         clean_head(root, head)
     except (ValueError, OSError, subprocess.CalledProcessError, KeyboardInterrupt):
         print(f"Local tag {tag} remains. Retry with make release VERSION={tag}", file=sys.stderr)

@@ -173,16 +173,20 @@ private struct Fixture {
     func downloader(
         retryDelays: [TimeInterval] = [0, 0, 0],
         freeBytes: @escaping (URL) -> Int64? = { _ in Int64.max / 4 },
-        spaceCheckBytes: Int64 = 128 << 20
+        spaceCheckBytes: Int64 = 128 << 20,
+        isNetworkMetered: (() -> Bool)? = nil
     ) -> FactoryImageDownloader {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubFactoryProtocol.self]
         var policy = FactoryImageDownloader.Policy()
         policy.retryDelays = retryDelays
         policy.lockPollInterval = 0.02
+        policy.meteredPollInterval = 0.01
         policy.spaceCheckBytes = spaceCheckBytes
         return FactoryImageDownloader(manifest: manifest, directory: directory, reserveBytes: 0,
-                                      policy: policy, configuration: configuration, freeBytes: freeBytes)
+                                      networkPolicy: isNetworkMetered == nil ? .any : .unmetered,
+                                      policy: policy, configuration: configuration, freeBytes: freeBytes,
+                                      isNetworkMetered: isNetworkMetered)
     }
 
     var imageURL: URL { FactoryImageStore.imageURL(in: directory, identity: manifest.identity) }
@@ -210,6 +214,19 @@ struct FactoryImageDownloadTests {
         #expect(phases.contains(.downloading) && phases.contains(.verifying))
         let mode = (try FileManager.default.attributesOfItem(atPath: url.path))[.posixPermissions] as? NSNumber
         #expect(mode?.intValue == 0o600)
+    }
+
+    @Test("on an unmetered policy, the download waits out a cellular or Low Data Mode connection")
+    func pausesWhileMetered() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let checks = Counter()
+        var phases: [FactoryDownloadProgress.Phase] = []
+        _ = try fixture.downloader(isNetworkMetered: { checks.increment() <= 3 }).run { phases.append($0.phase) }
+        #expect(try Data(contentsOf: fixture.imageURL) == fixture.image)
+        #expect(phases.first == .paused)
+        #expect(phases.filter { $0 == .paused }.count == 3)
+        #expect(phases.contains(.downloading))
     }
 
     @Test("a lost connection resumes from the last byte written")

@@ -6,8 +6,8 @@ enum StartMenuWindowChrome {
     static let contentSize = NSSize(width: 860, height: 600)
     static let minimumContentSize = NSSize(width: 760, height: 500)
 
-    static func apply(to window: NSWindow) {
-        window.title = "Try Omarchy"
+    static func apply(to window: NSWindow, title: String = ProductName.defaultName) {
+        window.title = title
         // Each pane draws its own title beside the window buttons.
         window.titleVisibility = .hidden
         window.titlebarSeparatorStyle = .none
@@ -48,6 +48,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private let networkPreferences: () -> VMNetworkPreferences
     private let saveNetworkPreferences: (VMNetworkPreferences) -> String?
     private let networkIdentity: VMNetworkIdentityAccess
+    private let networkService: NetworkServiceControls
     private var networkEditor: NetworkEditor?
     private let immersiveMode: () -> Bool
     private let setImmersiveMode: (Bool) -> Void
@@ -92,7 +93,15 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        if state.isRunning { window.level = .floating }
         onAppReleasePromptOpportunity?()
+    }
+
+    /// While Omarchy runs the window floats above Omarchy's, so it drops to
+    /// the normal level before Finder or System Settings opens, and floats
+    /// again once it is key.
+    private func yieldToAnotherApp() {
+        window.level = .normal
     }
     private var prelaunchControlsLocked: Bool { state.prelaunchLocked }
     private var settingsResetConfirmation: NSAlert?
@@ -138,6 +147,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         networkPreferences: @escaping () -> VMNetworkPreferences = { VMNetworkPreferences() },
         saveNetworkPreferences: @escaping (VMNetworkPreferences) -> String? = { _ in nil },
         networkIdentity: VMNetworkIdentityAccess = .unavailable,
+        networkService: NetworkServiceControls = .thisApp,
         immersiveMode: @escaping () -> Bool = { true },
         setImmersiveMode: @escaping (Bool) -> Void = { _ in },
         notchAvailable: @escaping () -> Bool = { false },
@@ -156,6 +166,8 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         appVersionLabel: String = InstalledAppRelease.current.label,
         appReleaseActionTitle: @escaping () -> String = { "Check for Updates…" },
         checkForAppUpdates: @escaping () -> Void = {},
+        productName: String = ProductName.current,
+        runsInAnotherApp: Bool = false,
         permissionPromptShown: @escaping () -> Bool = { true },
         setPermissionPromptShown: @escaping () -> Void = {},
         firstBootCompleted: @escaping () -> Bool = { false },
@@ -194,6 +206,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         self.networkPreferences = networkPreferences
         self.saveNetworkPreferences = saveNetworkPreferences
         self.networkIdentity = networkIdentity
+        self.networkService = networkService
         self.immersiveMode = immersiveMode
         self.setImmersiveMode = setImmersiveMode
         self.notchAvailable = notchAvailable
@@ -225,6 +238,8 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
 
         state.canResetStorage = canResetStorage
         state.appVersionLabel = appVersionLabel
+        state.productName = productName
+        state.runsInAnotherApp = runsInAnotherApp
         actions = makeActions()
         let host = NSHostingController(rootView: LauncherView(state: state, actions: actions))
         // Panes draw their own titles; bridging would show a second one.
@@ -233,7 +248,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         // view's own minimum frame keeps panes from collapsing.
         host.sizingOptions = [.minSize]
         window.contentViewController = host
-        StartMenuWindowChrome.apply(to: window)
+        StartMenuWindowChrome.apply(to: window, title: productName)
         window.setContentSize(StartMenuWindowChrome.contentSize)
         window.delegate = self
     }
@@ -322,7 +337,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         guard state.isRunning, !controlsBusy, !state.permissionRequestInFlight,
               window.attachedSheet == nil, portForwardingEditor == nil else { return }
         let alert = NSAlert()
-        alert.messageText = action == .restart ? "Restart Try Omarchy?" : "Shut down Omarchy to manage this VM?"
+        alert.messageText = action == .restart ? "Restart \(state.productName)?" : "Shut down Omarchy to manage this VM?"
         alert.informativeText = action == .restart
             ? "Save your work first. Omarchy will shut down and start again with your saved settings."
             : "Save your work first. The settings window will stay open so you can manage this VM."
@@ -476,7 +491,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
 
         let alert = NSAlert()
         alert.alertStyle = .critical
-        alert.messageText = "Try Omarchy couldn’t start"
+        alert.messageText = "\(state.productName) couldn’t start"
         alert.informativeText = errorMessage
         alert.addButton(withTitle: "OK")
         alert.beginSheetModal(for: window)
@@ -492,6 +507,25 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         return false
     }
 
+    /// The networking helper can change while the window is open.
+    func networkServiceChanged() {
+        refreshNetwork()
+        networkEditor?.serviceChanged()
+    }
+
+    private func refreshNetwork() {
+        let network = networkPreferences()
+        let networkSummary = LauncherState.networkSummary(
+            network,
+            bridgeAvailable: network.mode != .bridged
+                || VMBridgeInterfaces.available().contains { $0.name == network.interface },
+            serviceEnabled: network.mode != .bridged || networkService.isReady()
+        )
+        state.networkIsBridged = network.mode == .bridged
+        state.networkDetail = networkSummary.detail
+        state.networkWarning = networkSummary.warning
+    }
+
     /// Reads every setting the launcher shows. Only explicit refreshes call
     /// this; app activation refreshes permissions alone.
     private func refresh() {
@@ -505,16 +539,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         state.usbDeviceState = usbDevice
         state.usbDevice = StartMenuPresentation.usbDevice(state: usbDevice)
 
-        let network = networkPreferences()
-        let networkSummary = LauncherState.networkSummary(
-            network,
-            bridgeAvailable: network.mode != .bridged
-                || VMBridgeInterfaces.available().contains { $0.name == network.interface },
-            serviceEnabled: network.mode != .bridged || NetworkService.service.status == .enabled
-        )
-        state.networkIsBridged = network.mode == .bridged
-        state.networkDetail = networkSummary.detail
-        state.networkWarning = networkSummary.warning
+        refreshNetwork()
         let portMappings = portForwardingStatus()
         state.portCount = portMappings.count
         state.portForwarding = StartMenuPresentation.portForwarding(mappings: portMappings)
@@ -552,6 +577,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     }
 
     private func beginAccessibilityRequest() {
+        yieldToAnotherApp()
         requestAccessibility()
         updatePermissionState()
     }
@@ -588,6 +614,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         guard let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)"
         ) else { return }
+        yieldToAnotherApp()
         NSWorkspace.shared.open(url)
     }
 
@@ -618,6 +645,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
                     attributes: [.posixPermissions: 0o700]
                 )
             }
+            yieldToAnotherApp()
             guard NSWorkspace.shared.open(storageLocationURL) else {
                 throw NSError(
                     domain: "TryOmarchy.StorageLocation",
@@ -736,7 +764,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private func beginNetworkConfiguration() {
         guard !controlsBusy, networkEditor == nil else { return }
         let editor = NetworkEditor(preferences: networkPreferences(), interfaces: VMBridgeInterfaces.available(),
-            identity: networkIdentity, save: saveNetworkPreferences, didClose: { [weak self] in
+            identity: networkIdentity, service: networkService, save: saveNetworkPreferences, didClose: { [weak self] in
                 self?.networkEditor = nil
                 self?.refresh()
             })
@@ -832,7 +860,9 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Reset all settings?"
-        alert.informativeText = "Resources, networking, port forwarding, the shared folder, USB device, audio devices, Immersive Mode, Camera Notch, Dictation, and Skip Launcher return to their defaults. Your VM and its files are not changed."
+        alert.informativeText = state.runsInAnotherApp
+            ? "Resources, networking, port forwarding, the shared folder, USB device, Immersive Mode, Camera Notch, and Dictation return to their defaults. Your VM and its files are not changed."
+            : "Resources, networking, port forwarding, the shared folder, USB device, audio devices, Immersive Mode, Camera Notch, Dictation, and Skip Launcher return to their defaults. Your VM and its files are not changed."
         let reset = alert.addButton(withTitle: "Reset Settings")
         reset.hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")

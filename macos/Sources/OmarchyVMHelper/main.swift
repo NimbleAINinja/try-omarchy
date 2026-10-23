@@ -1,11 +1,12 @@
 import AppKit
 import Darwin
 import Foundation
+import TryOmarchyKitClient
 
 private var terminationSignalSources: [DispatchSourceSignal] = []
 
 private func usage() -> Never {
-    fputs("Usage: omarchy-vm-helper --run-qemu [--ephemeral | --reset-storage | --reset-storage-only] [GUEST_DIR] | --copy-vm SOURCE EMPTY_DESTINATION | --trash-vm SOURCE CONFIRMED_IDENTITY | --host-keyboard-geometry | --host-caps-lock-input | --host-display-cutouts | --host-timezone | --host-audio-frequency output|input [SDL_NAME] | --wait-for-qmp QEMU_PID SOCKET | --sparsify DISK | --bridge-guest-status QEMU_PID SOCKET STATUS_FILE | --bridge-command-super QEMU_PID QMP_SOCKET | --bridge-native-audio QEMU_PID SOCKET ROUTE_DIRECTORY | --bridge-native-authentication QEMU_PID SOCKET | --bridge-native-camera QEMU_PID SOCKET | --bridge-native-battery QEMU_PID SOCKET | --bridge-native-dictation QEMU_PID SOCKET LOCALE | --bridge-native-clipboard QEMU_PID SOCKET | --bridge-native-timezone QEMU_PID SOCKET\n", stderr)
+    fputs("Usage: omarchy-vm-helper --run-qemu [--ephemeral | --reset-storage | --reset-storage-only] [GUEST_DIR] | --run-vm | --copy-vm SOURCE EMPTY_DESTINATION | --trash-vm SOURCE CONFIRMED_IDENTITY | --host-keyboard-geometry | --host-caps-lock-input | --host-display-cutouts | --host-timezone | --host-audio-frequency output|input [SDL_NAME] | --wait-for-qmp QEMU_PID SOCKET | --sparsify DISK | --bridge-guest-status QEMU_PID SOCKET STATUS_FILE | --bridge-command-super QEMU_PID QMP_SOCKET | --bridge-native-audio QEMU_PID SOCKET ROUTE_DIRECTORY | --bridge-native-authentication QEMU_PID SOCKET | --bridge-native-camera QEMU_PID SOCKET | --bridge-native-battery QEMU_PID SOCKET | --bridge-native-dictation QEMU_PID SOCKET LOCALE | --bridge-native-clipboard QEMU_PID SOCKET | --bridge-native-timezone QEMU_PID SOCKET\n", stderr)
     exit(64)
 }
 
@@ -306,6 +307,49 @@ do {
             fputs("unknown host Mac keyboard geometry\n", stderr)
             exit(1)
         }
+    }
+
+    if arguments.first == "--run-vm" {
+        guard arguments.count == 1 else { usage() }
+        Darwin.signal(SIGPIPE, SIG_IGN)
+        let configuration: VMRunConfiguration
+        let launcher: URL
+        do {
+            configuration = try VMRunInput.readConfiguration()
+        } catch {
+            VMRunOutput.fail(VMRunError(code: .invalidConfiguration, message: "The run mode configuration is invalid."),
+                             status: 64)
+        }
+        do {
+            launcher = try QEMUGPULauncherPath.resolve(bundleURL: Bundle.main.bundleURL)
+        } catch {
+            VMRunOutput.fail(VMRunError(code: .launchFailed, message: error.localizedDescription), status: 1)
+        }
+        MainActor.assumeIsolated {
+            let application = NSApplication.shared
+            application.setActivationPolicy(.prohibited)
+            let controller = VMRunModeController(configuration: configuration, launcherURL: launcher)
+            application.delegate = controller
+            for signalNumber in [SIGHUP, SIGINT, SIGTERM] {
+                Darwin.signal(signalNumber, SIG_IGN)
+                let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+                source.setEventHandler {
+                    let signals = source.data
+                    MainActor.assumeIsolated {
+                        for _ in 0..<max(1, signals) { controller.handleTerminationSignal() }
+                    }
+                }
+                source.resume()
+                terminationSignalSources.append(source)
+            }
+            VMRunInput.follow {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { controller.requestShutdown() }
+                }
+            }
+            application.run()
+        }
+        exit(0)
     }
 
     if arguments.first == "--run-qemu" {

@@ -13,6 +13,7 @@ final class NetworkEditor: NSObject {
     private let regenerateMAC = NSButton(title: "Generate new MAC…", target: nil, action: nil)
     private let macControls = NSStackView()
     private let identity: VMNetworkIdentityAccess
+    private let service: NetworkServiceControls
     private var currentMAC = ""
     private var canReplaceMAC = false
     private let detail = NSTextField(wrappingLabelWithString: "")
@@ -29,9 +30,10 @@ final class NetworkEditor: NSObject {
     private let didClose: () -> Void
 
     init(preferences: VMNetworkPreferences, interfaces: [VMBridgeInterface],
-         identity: VMNetworkIdentityAccess = .unavailable,
+         identity: VMNetworkIdentityAccess = .unavailable, service: NetworkServiceControls = .thisApp,
          save: @escaping (VMNetworkPreferences) -> String?, didClose: @escaping () -> Void) {
         self.identity = identity
+        self.service = service
         self.savedPreferences = preferences
         self.interfaces = interfaces
         self.save = save
@@ -52,6 +54,9 @@ final class NetworkEditor: NSObject {
         } else if !preferences.interface.isEmpty {
             interface.addItem(withTitle: "Unavailable: \(preferences.interface)")
             interface.selectItem(at: interfaces.count)
+        } else if let unchosen = VMBridgeInterfaces.unchosenDefault(in: interfaces),
+                  let index = interfaces.firstIndex(of: unchosen) {
+            interface.selectItem(at: index)
         }
         interface.target = self; interface.action = #selector(update)
         interface.setAccessibilityLabel("Bridge interface")
@@ -88,8 +93,12 @@ final class NetworkEditor: NSObject {
         update()
     }
 
+    func serviceChanged() {
+        update()
+    }
+
     @objc private func update() {
-        serviceStatus.stringValue = serviceBusy ? "Checking networking helper" : (serviceResult ?? NetworkService.statusText)
+        serviceStatus.stringValue = serviceBusy ? "Checking networking helper" : (serviceResult ?? service.status())
         setup.isEnabled = !serviceBusy
         remove.isEnabled = !serviceBusy
         mode.isEnabled = !serviceBusy
@@ -98,6 +107,7 @@ final class NetworkEditor: NSObject {
         for view in [interface, explanation, ssh, macAddress, macHelp, macControls, serviceStatus, controls] as [NSView] {
             view.isHidden = !bridged
         }
+        controls.isHidden = !bridged || service.repair == nil
         let valid = interfaces.indices.contains(interface.indexOfSelectedItem)
         interface.isEnabled = bridged && !serviceBusy
         let compatibilityRequired = bridged && valid && VMNetworkPolicy.requiresWiFiCompatibility(
@@ -197,16 +207,19 @@ final class NetworkEditor: NSObject {
         }
     }
 
-    @objc private func setUpService() { serviceAction(success: "Networking helper ready — connection verified") { try await NetworkService.repair() } }
+    @objc private func setUpService() {
+        guard let repair = service.repair else { return }
+        serviceAction(success: "Networking helper ready — connection verified") { try await repair() }
+    }
     @objc private func removeService() {
-        guard !serviceBusy else { return }
+        guard !serviceBusy, let remove = service.remove else { return }
         let confirmation = NSAlert()
         confirmation.messageText = "Remove the networking helper?"
         confirmation.informativeText = "This stops networking for any active bridged Omarchy VM. Shut those VMs down first. You can set up the helper again later."
         confirmation.addButton(withTitle: "Remove Helper")
         confirmation.addButton(withTitle: "Cancel")
         guard confirmation.runModal() == .alertFirstButtonReturn else { return }
-        serviceAction { try await NetworkService.remove() }
+        serviceAction { try await remove() }
     }
 
     func beginSheet(for window: NSWindow) {

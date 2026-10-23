@@ -55,16 +55,7 @@ After verifying the DMG, run:
 make publish
 ```
 
-It reads the version from the built app, checks that the DMG exists and that
-the app's download manifest points at that tag's parts in `dist/factory/`, and
-pushes the tag first, so the release
-points at the commit that was built rather than one GitHub would create from
-the draft's target branch. It refuses if origin already has the tag on another
-commit. It then uploads the DMG and the factory parts to the draft release with
-that tag, replacing earlier uploads; a draft named `vX.Y.Z` with no tag yet gets
-the tag selected. Without a draft it creates one. A published release is never
-changed. Review the draft on GitHub and publish it yourself: until then its
-assets are private and the app cannot download the image.
+It reads the version from the built app, checks that the DMG and the kit exist, that the kit matches its recorded digest, that the kit's manifest names the tag, and that the app's download manifest points at that tag's parts in `dist/factory/`, and pushes the tag first, so the release points at the commit that was built rather than one GitHub would create from the draft's target branch. It refuses if origin already has the tag on another commit. It then uploads the DMG, the kit (`TryOmarchyKit.zip`, its `.sha256` and its manifest `TryOmarchyKit.json`, see [the VM kit](vm-kit.md)) and the factory parts to the draft release with that tag, replacing earlier uploads; a draft named `vX.Y.Z` with no tag yet gets the tag selected. Without a draft it creates one. A published release is never changed. Review the draft on GitHub and publish it yourself: until then its assets are private and the app cannot download the image.
 
 The filename stays the same for every release; the app inside is stamped with
 the version from the release tag.
@@ -76,7 +67,8 @@ URL, size and SHA-256 digest. The URLs point at
 `https://github.com/omacom/try-omarchy/releases/download/vX.Y.Z/`, so the parts
 must be uploaded to the release with the same tag, under their generated names,
 before the release is published. A release without them cannot create a new
-VM; existing VMs are unaffected.
+VM; existing VMs are unaffected. Kits download from the same parts, so a
+release is never deleted while an installer may still pin its kit.
 
 Always upload the DMG as `TryOmarchy.dmg` so older app release checkers and the
 website's stable download link continue to work:
@@ -101,20 +93,49 @@ Outputs are written to:
 - `dist/TryOmarchy.dmg`
 - `dist/guest/`
 
-`make package` and `make release` both create distributable builds: they sign
-the app and DMG with Developer ID, submit the DMG to Apple's notarization
-service, and staple the resulting tickets. Neither command falls back to an
-unnotarized build. Both commands first ensure the content-hashed guest,
-runtime and firmware artifacts are current; packaging and signing themselves always run
-freshly. Development stays at `dist/app.noindex/Try Omarchy.app` with a separate
-bundle ID and privacy grants, so production permission flows can be tested
-independently. Another maintainer can override the release defaults:
+`make package` and `make release` both create distributable builds: they sign the app, the DMG and the kit with Developer ID, submit the DMG and the kit to Apple's notarization service, and staple the resulting tickets. Neither command falls back to an unnotarized build. Both commands first ensure the content-hashed guest, runtime and firmware artifacts are current; packaging and signing themselves always run freshly. Development stays at `dist/app.noindex/Try Omarchy.app` with a separate bundle ID and privacy grants, so production permission flows can be tested independently. Another maintainer can override the release defaults:
 
 ```sh
 make release VERSION=vX.Y.Z \
   RELEASE_SIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
   RELEASE_NOTARY_PROFILE=example-profile
 ```
+
+## The kit
+
+The kit is signed and notarized with the app, by the same `make release` (or `make package`), with `RELEASE_SIGN_IDENTITY` and `RELEASE_NOTARY_PROFILE`. There is nothing else to run. `macos/build-kit.sh`, through `scripts/kit_signature.py`:
+
+1. signs every Mach-O in the kit as `dev.tryomarchy.kit`, with the hardened runtime and a secure timestamp. The networking server, supervisor and client come first, because the networking daemon is built after them and pins them. Then, inside out: the libraries, the other tools and the daemon, QEMU with the hypervisor and microphone entitlements, the helper with the camera and microphone entitlements, and the kit's bundle;
+2. checks those signatures, then `omarchy-network-daemon check` and the launcher's self-check, and zips the kit into `TryOmarchyKit.zip`;
+3. submits the zip with `xcrun notarytool submit --wait`, and stops unless Apple accepts it;
+4. staples the ticket to the kit's bundle, checks that the helper, QEMU and the daemon are notarized, and zips the stapled kit again;
+5. records the digest of that zip in `TryOmarchyKit.zip.sha256` and copies the manifest to `TryOmarchyKit.json`.
+
+A zip cannot be stapled, so the zip that is published is the one rebuilt from the stapled kit, and its digest is of the published bytes. The installer downloads kits without the quarantine attribute, so Gatekeeper does not assess them there.
+
+Then `make release` runs `tests/kit/check.sh` on the kit, with `KIT_TEAM_ID` set to the identity's team and `KIT_NOTARIZED=1`. It refuses the release if a Mach-O is ad hoc, unsigned, signed by another team or identifier, without the hardened runtime or a timestamp, or with other entitlements than its own; if the helper, QEMU or the daemon does not satisfy the `notarized` requirement (`codesign --verify --strict --check-notarization -R=notarized`), or the bundle has no valid stapled ticket; if the networking daemon does not accept the runtime it pinned; or if QEMU does not start with its libraries. It runs the kit's code only once the signatures pass. Gatekeeper's `spctl --assess --type execute` is not used: it rejects every non-app, a helper bundle and a command-line tool alike ("does not seem to be an app").
+
+To try the kit's release signing without notarizing, sign it ad hoc from a production app and check it:
+
+```sh
+macos/build-kit.sh --app "dist/release.noindex/Try Omarchy.app" --output /tmp/kit --sign-identity -
+tests/kit/check.sh /tmp/kit
+```
+
+The check says which checks an ad hoc kit skips. With the Developer ID identity instead of `-`, the kit is signed as a release is; check it with `KIT_TEAM_ID=<team> KIT_NOTARIZED=0`, since only a notarized kit passes the notarization check. Without `--notarize-profile` nothing is sent to Apple. Do this dry run before tagging a release: nothing else exercises Developer ID signing before `make release`.
+
+To verify a published kit, download `TryOmarchyKit.zip`, `TryOmarchyKit.zip.sha256` and `TryOmarchyKit.json` from the release into an empty folder, then run from the repository:
+
+```sh
+kit=/tmp/published-kit
+(cd "$kit" && shasum -a 256 -c TryOmarchyKit.zip.sha256 && ditto -x -k TryOmarchyKit.zip .)
+codesign -dv --verbose=4 "$kit/TryOmarchyKit.bundle/Contents/Resources/runtime/bin/Try Omarchy"
+codesign --verify --strict --check-notarization -R=notarized "$kit/TryOmarchyKit.bundle/Contents/Resources/runtime/bin/Try Omarchy"
+xcrun stapler validate "$kit/TryOmarchyKit.bundle"
+KIT_TEAM_ID=RZC79MPD34 KIT_NOTARIZED=1 tests/kit/check.sh "$kit"
+```
+
+`codesign -dv` shows `Identifier=dev.tryomarchy.kit`, `flags=0x10000(runtime)`, `Authority=Developer ID Application: …`, a `Timestamp` and `TeamIdentifier=RZC79MPD34`; the notarization check prints nothing and exits 0; `stapler` says the validate action worked. The kit check does the same for every Mach-O in the kit, and checks the signatures before it runs any of the kit's code.
 
 ## Release checklist
 
@@ -136,7 +157,7 @@ make release VERSION=vX.Y.Z \
    bundled `try-omarchy` package when it is newer (start menu **Omarchy** row),
    and `omarchy update` still completes. Separately confirm that new, reset,
    and ephemeral VMs use the current factory.
-5. Verify the app and DMG signatures with Apple's tools and confirm notarization.
+5. Verify the app, DMG and kit signatures with Apple's tools and confirm notarization ([the kit](#the-kit)).
 6. Audit `THIRD_PARTY_NOTICES.md`, the bundle's license material, the
    factory's `packages.txt`, and QEMU and edk2 corresponding-source obligations.
 7. State in release notes that installing the app preserves existing VM
@@ -156,7 +177,7 @@ packages must keep working with a newer app, and the reverse.
 
 ## macOS compatibility validation
 
-Run `make test` and `make runtime` on macOS 15 and 26 (both covered by CI).
+Run `make test` and `make runtime` on macOS 15 and 26 (both covered by CI, which also builds and checks the kit from that runtime).
 The runtime build runs the pinned VirGL dual-source shader
 and blend-state regression tests and rejects bundled Mach-O files targeting a
 version newer than 15.0 or strongly importing `strchrnul` (introduced in 15.4).

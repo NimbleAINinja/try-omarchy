@@ -109,9 +109,9 @@ class GraphicalBridges(unittest.TestCase):
         install = (PACKAGE / "try-omarchy.install").read_text()
         self.assertIn("omarchy-native-dictation-bridge.service", install[:install.index("post_install()")])
         post_upgrade = install[install.index("post_upgrade()"):]
-        self.assertIn('if [ "$(vercmp "$2" 0.1.0-35)" -lt 0 ]; then\n'
+        self.assertIn('if [ "$(vercmp "$2" 0.1.0-37)" -lt 0 ]; then\n'
                       '    systemctl --global preset omarchy-native-dictation-bridge.service', post_upgrade)
-        self.assertIn("pkgrel=35\n", (PACKAGE / "PKGBUILD").read_text())
+        self.assertIn("pkgrel=37\n", (PACKAGE / "PKGBUILD").read_text())
 
     def test_dictation_bridge_waits_for_its_port(self):
         unit = configparser.ConfigParser(interpolation=None, strict=False)
@@ -495,6 +495,14 @@ class MenuEntries(unittest.TestCase):
                        check=True)
         created = other / ".config/omarchy/extensions/omarchy-menu.jsonc"
         self.assertIn("setup.try-omarchy", self.parse(created.read_text()))
+
+    def test_the_settings_row_and_desktop_entry_say_try_omarchy(self):
+        self.entries()
+        self.assertEqual(self.parse(self.menu.read_text())["setup.try-omarchy"]["label"], "Try Omarchy Settings")
+        entry = configparser.ConfigParser(interpolation=None)
+        entry.optionxform = str
+        entry.read(FILES / "usr/share/applications/try-omarchy-settings.desktop")
+        self.assertEqual(entry["Desktop Entry"]["Name"], "Try Omarchy Settings")
 
 
 class IdleDefaults(unittest.TestCase):

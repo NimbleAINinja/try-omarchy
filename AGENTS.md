@@ -11,6 +11,7 @@ The full version is in [CONTRIBUTING.md](CONTRIBUTING.md#principles).
 - **A shell, not a distribution.** The guest is stock Omarchy. We don't modify Omarchy or its packages.
 - **Do the minimum.** Change only what Omarchy needs to work well in a VM on a Mac. A fix that real hardware also needs belongs upstream.
 - **Two places.** Everything inside the guest is one package, `try-omarchy`. Everything on the Mac is the app and its VM runtime.
+- **Shells all the way down.** Try is a shell for Omarchy, and Omarchy Installer is a shell for Try. This repository is the source of Try, the kit the installer embeds and fetches; the installer adds nothing of its own to the VM.
 - **Independent updates.** Omarchy updates itself. The app updates separately, and brings a newer `try-omarchy` package with it. Each version of the app must work with older and newer versions of the package.
 - **Follow Omarchy's channel.** We use `edge` today and move to `stable` when Omarchy releases its Mac image there.
 
@@ -63,16 +64,19 @@ When users will notice a change, update the manual. When the design changes, upd
 
 | Level | Where | Covers |
 | --- | --- | --- |
-| `make test` | Any Mac, and CI | Unit and contract tests for the app, scripts and package |
+| `make test` | Any Mac, and CI | Unit and contract tests for the app, scripts and package, and the run mode as a real process (`run-mode.test.sh`) |
+| Build | CI (macOS) | The runtime, and the kit built from it and checked with `make test-kit` |
 | Guest checks | CI (Linux) | The package installed on today's Omarchy, and the desktop booted on a virtual display |
 | `make e2e` | An Apple Silicon Mac | The real VM: hardware virtualization, the GPU, the Mac bridges, a second boot |
 
-CI cannot boot the VM. A change to the app, the runtime or the bridges needs `make e2e`, or the PR must say it wasn't run.
+- **Every mechanism ships with its check in CI.** A PR that adds a build step, a protocol, a file format or a script adds a CI check for it.
+- **CI covers everything that can be checked without booting the VM.** `make e2e` is the only exception: a change to the app, the runtime or the bridges needs it, and the PR says whether it ran.
 
 ## Done means
 
 - The change has one concern, and its tests and docs are updated.
 - `make test` passes. For a docs-only change, `git diff --check` passes and the links resolve.
+- A new build step, protocol, file format or script has a check that runs in CI.
 - Changes to the VM, the app or the bridges pass `make e2e`.
 - Visual changes were checked in the real app or guest ([visual verification](agents/skills/visual-verification.md)).
 - The PR lists the exact commands, their results, and what wasn't checked.
