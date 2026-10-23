@@ -45,7 +45,7 @@ python3 -I -c 'import plistlib, sys; assert plistlib.load(open(sys.argv[1], "rb"
     "CFBundleExecutable": "omarchy-vm-helper", "CFBundlePackageType": "BNDL",
     "LSUIElement": True, "NSHighResolutionCapable": True}' "$contents/Info.plist" ||
   fail "the kit's Info.plist has more than its executable and presentation"
-[[ $(codesign -d "$kit" 2>&1 | sed -n 's/^Identifier=//p') == dev.tryomarchy.kit ]] ||
+[[ $(codesign -dv "$kit" 2>&1 | sed -n 's/^Identifier=//p') == dev.tryomarchy.kit ]] ||
   fail "the kit is not signed as dev.tryomarchy.kit"
 
 python3 "$root/scripts/kit_manifest.py" --root "$root" --check "$resources/kit.json" >/dev/null || fail "kit.json is invalid"
