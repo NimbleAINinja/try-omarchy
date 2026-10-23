@@ -489,6 +489,25 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         return false
     }
 
+    /// The networking helper can change while the window is open.
+    func networkServiceChanged() {
+        refreshNetwork()
+        networkEditor?.serviceChanged()
+    }
+
+    private func refreshNetwork() {
+        let network = networkPreferences()
+        let networkSummary = LauncherState.networkSummary(
+            network,
+            bridgeAvailable: network.mode != .bridged
+                || VMBridgeInterfaces.available().contains { $0.name == network.interface },
+            serviceEnabled: network.mode != .bridged || networkService.isReady()
+        )
+        state.networkIsBridged = network.mode == .bridged
+        state.networkDetail = networkSummary.detail
+        state.networkWarning = networkSummary.warning
+    }
+
     /// Reads every setting the launcher shows. Only explicit refreshes call
     /// this; app activation refreshes permissions alone.
     private func refresh() {
@@ -502,16 +521,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         state.usbDeviceState = usbDevice
         state.usbDevice = StartMenuPresentation.usbDevice(state: usbDevice)
 
-        let network = networkPreferences()
-        let networkSummary = LauncherState.networkSummary(
-            network,
-            bridgeAvailable: network.mode != .bridged
-                || VMBridgeInterfaces.available().contains { $0.name == network.interface },
-            serviceEnabled: network.mode != .bridged || networkService.isReady()
-        )
-        state.networkIsBridged = network.mode == .bridged
-        state.networkDetail = networkSummary.detail
-        state.networkWarning = networkSummary.warning
+        refreshNetwork()
         let portMappings = portForwardingStatus()
         state.portCount = portMappings.count
         state.portForwarding = StartMenuPresentation.portForwarding(mappings: portMappings)

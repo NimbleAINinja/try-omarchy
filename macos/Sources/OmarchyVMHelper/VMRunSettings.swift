@@ -195,6 +195,10 @@ final class VMRunSettingsWindow {
         return true
     }
 
+    func networkServiceChanged() {
+        startMenuWindow?.networkServiceChanged()
+    }
+
     func close() {
         startMenuWindow?.dismiss()
         activationController.setDesiredPolicy(.prohibited)
