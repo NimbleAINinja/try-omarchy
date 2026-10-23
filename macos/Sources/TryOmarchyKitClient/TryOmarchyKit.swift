@@ -104,7 +104,7 @@ public enum TryOmarchyStorage {
 
     private static func storedLocation(in folder: URL) -> StoredLocation {
         var information = stat()
-        guard lstat(folder.path, &information) == 0 else { return errno == ENOENT ? .absent : .untrusted }
+        guard lstat(folder.path, &information) == 0 else { return .absent }
         guard information.st_mode & S_IFMT == S_IFDIR, information.st_uid == getuid(),
               information.st_mode & 0o022 == 0 else { return .untrusted }
         let file = folder.appendingPathComponent(storageLocationFileName, isDirectory: false)
