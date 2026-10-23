@@ -192,10 +192,14 @@ public enum VMRunErrorCode: String, CaseIterable, Sendable {
 public struct VMRunError: Error, Equatable, Sendable, LocalizedError {
     public let code: VMRunErrorCode
     public let message: String
+    /// The code as the run mode wrote it. A code this version does not know
+    /// reads as `launchFailed`, with the kit's own code kept here.
+    public let reportedCode: String
 
-    public init(code: VMRunErrorCode, message: String) {
+    public init(code: VMRunErrorCode, message: String, reportedCode: String? = nil) {
         self.code = code
         self.message = message
+        self.reportedCode = reportedCode ?? code.rawValue
     }
 
     public var errorDescription: String? { message }
@@ -257,20 +261,18 @@ public enum VMRunEvent: Equatable, Sendable {
     }
 
     /// An event or notice code this version does not know throws
-    /// `unknownEvent`, which a reader skips: newer kits may add them.
+    /// `unknownEvent`, which a reader skips, and keys it does not know are
+    /// ignored: newer kits may add them.
     public static func decode(line: Data) throws -> Self {
         let object = try VMRunLine.decode(line)
         guard VMRunLine.integer(object["version"]) == VMRunProtocol.version,
               let name = object["event"] as? String else { throw VMRunProtocolError.invalidEvent }
-        func require(_ keys: Set<String>, optional: Set<String> = []) throws {
-            let present = Set(object.keys).subtracting(["version", "event"])
-            guard keys.isSubset(of: present), present.isSubset(of: keys.union(optional)) else {
-                throw VMRunProtocolError.invalidEvent
-            }
+        func require(_ keys: Set<String>) throws {
+            guard keys.isSubset(of: Set(object.keys)) else { throw VMRunProtocolError.invalidEvent }
         }
         switch name {
         case "progress":
-            try require(["phase"], optional: ["percent"])
+            try require(["phase"])
             guard let phaseName = object["phase"] as? String,
                   let phase = VMRunPhase(rawValue: phaseName) else { throw VMRunProtocolError.invalidEvent }
             var percent: Int?
@@ -296,11 +298,11 @@ public enum VMRunEvent: Equatable, Sendable {
             return .stopping
         case "error":
             try require(["code", "message"])
-            guard let codeName = object["code"] as? String,
-                  let code = VMRunErrorCode(rawValue: codeName),
+            guard let codeName = object["code"] as? String, !codeName.isEmpty, codeName.utf8.count <= 64,
                   let message = object["message"] as? String,
                   message.utf8.count <= 16_384 else { throw VMRunProtocolError.invalidEvent }
-            return .error(VMRunError(code: code, message: message))
+            return .error(VMRunError(code: VMRunErrorCode(rawValue: codeName) ?? .launchFailed, message: message,
+                                     reportedCode: codeName))
         case "exited":
             try require(["status"])
             guard let status = VMRunLine.integer(object["status"]), (0...255).contains(status) else {

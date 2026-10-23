@@ -42,20 +42,30 @@ struct VMRunProtocolTests {
         }
     }
 
+    @Test func eventsANewerKitExtendsStillRead() throws {
+        #expect(try VMRunEvent.decode(line: Data(#"{"version":1,"event":"ready","since":3}"#.utf8)) == .ready)
+        let notice = #"{"version":1,"event":"notice","code":"bridged-network-unavailable","message":"x","interface":"en0"}"#
+        #expect(try VMRunEvent.decode(line: Data(notice.utf8))
+            == .notice(VMRunNotice(code: .bridgedNetworkUnavailable, message: "x")))
+        let error = try VMRunEvent.decode(line: Data(#"{"version":1,"event":"error","code":"gpu-lost","message":"x","detail":1}"#.utf8))
+        #expect(error == .error(VMRunError(code: .launchFailed, message: "x", reportedCode: "gpu-lost")))
+        guard case .error(let failure) = error else { return }
+        #expect(failure.reportedCode == "gpu-lost")
+        #expect(VMRunError(code: .qemuExited, message: "x").reportedCode == "qemu-exited")
+    }
+
     @Test func eventsAreValidatedStrictly() {
         let invalid = [
             #"{"version":2,"event":"ready"}"#,
             #"{"event":"ready"}"#,
-            #"{"version":1,"event":"ready","extra":1}"#,
             #"{"version":1,"event":"launched"}"#,
             #"{"version":1,"event":"progress","phase":"downloading","percent":101}"#,
             #"{"version":1,"event":"progress","phase":"downloading","percent":4.5}"#,
             #"{"version":1,"event":"progress","phase":"downloading","percent":true}"#,
             #"{"version":1,"event":"progress","phase":"teleporting"}"#,
-            #"{"version":1,"event":"error","code":"gone","message":"x"}"#,
             #"{"version":1,"event":"error","code":"qemu-exited"}"#,
+            #"{"version":1,"event":"error","code":"","message":"x"}"#,
             #"{"version":1,"event":"notice","code":"bridged-network-unavailable"}"#,
-            #"{"version":1,"event":"notice","code":"bridged-network-unavailable","message":"x","extra":1}"#,
             #"{"version":1,"event":"notice","code":7,"message":"x"}"#,
             #"{"version":1,"event":"exited","status":256}"#,
             #"{"version":1,"event":"exited","status":"0"}"#,
