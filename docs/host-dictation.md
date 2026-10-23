@@ -67,7 +67,7 @@ Host to guest:
 |---|---|
 | `{"cmd":"start","model":"speech"\|"dictation"}` | The connection stays open for `{"event":…}` lines: `recording`, `level`, `partial`, `processing`, then `final`, `cancelled` or `error`, then EOF. |
 | `{"cmd":"stop"}`, `{"cmd":"cancel"}` | `{"ok":true}`; acts on whichever session is live. |
-| `{"cmd":"ping"}` | `{"ok":true,"session":bool}` after a round trip to the Mac. |
+| `{"cmd":"ping"}` | `{"ok":true,"session":bool}` after a round trip to the Mac. `session` is true while the Mac records a session that hasn't been stopped, so a toggle during the final text starts the next one. |
 
 A session is live from the moment its `start` is sent, so a quick tap whose `stop` arrives before `recording` still stops it. The owner closing its connection while the session is live cancels it, so the Mac microphone never runs for nobody. A Mac that stays silent for 5 seconds, or goes away, ends the session with an error. If another program already answers on the socket path, the service leaves it alone.
 

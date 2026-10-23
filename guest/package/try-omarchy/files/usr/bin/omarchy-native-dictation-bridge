@@ -11,7 +11,8 @@ with one connection per command:
         {"event":"final","text":...,"ms":...}, {"event":"cancelled"} or
         {"event":"error","message":...}, then EOF
     {"cmd":"stop"} / {"cmd":"cancel"}   {"ok":true}
-    {"cmd":"ping"}                      {"ok":true,"session":bool}
+    {"cmd":"ping"}                      {"ok":true,"session":bool}, true while
+                                        the Mac records a session not yet stopped
 
 The port is one stream, so sessions are numbered here and every port line
 carries the number; the host keeps at most one live and handles commands in
@@ -141,7 +142,8 @@ class Bridge:
         if kind == "pong":
             waiting = self.pings.pop(message.get("id"), None)
             if waiting:
-                waiting[0].send({"ok": True, "session": "session" in message})
+                recording = self.live is not None and message.get("session") == self.live
+                waiting[0].send({"ok": True, "session": recording})
                 self.close(waiting[0])
             return
         session = message.get("session")

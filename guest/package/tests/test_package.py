@@ -1487,6 +1487,26 @@ class DictationBridge(unittest.TestCase):
         self.assertEqual(self.host_read()["type"], "ping")
         self.assertEqual(self.read_events(silent, 1), [{"ok": False, "error": "host not responding"}, "EOF"])
 
+    def test_ping_reports_a_session_only_while_it_records(self):
+        self.started()
+        self.request(cmd="start")
+        self.assertEqual(self.host_read()["session"], 1)
+
+        def ping(live):
+            pinger = self.request(cmd="ping")
+            sent = self.host_read()
+            self.host_send(type="pong", id=sent["id"], **({"session": live} if live else {}))
+            return self.read_events(pinger, 1)[0]["session"]
+
+        self.assertTrue(ping(1))
+        self.request(cmd="stop")
+        self.assertEqual(self.host_read()["type"], "stop")
+        # The Mac still finishes session 1, so a toggle now must start the next one.
+        self.assertFalse(ping(1))
+        self.request(cmd="start")
+        self.assertEqual(self.host_read()["session"], 2)
+        self.assertFalse(ping(None))  # the Mac lost session 2
+
     def test_second_start_cancels_first_owner(self):
         self.started()
         first = self.request(cmd="start")
