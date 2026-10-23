@@ -59,6 +59,7 @@ class CocoaPointerMappingTests(unittest.TestCase):
         self.assertIn("!(styleMask & NSWindowStyleMaskFullScreen)", branch)
         self.assertIn("setContentResizeIncrements:NSMakeSize(1, 1)", branch)
         self.assertIn("setContentMinSize:cocoa_guest_frame_size(", branch)
+        self.assertIn("[self updateUIInfo];", branch)
         self.assertNotIn("setContentSize", branch)
 
     def test_initial_guest_size_is_in_pixels(self) -> None:
