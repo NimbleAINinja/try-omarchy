@@ -48,17 +48,41 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         if let failure = Self.preflight(environment: baseEnvironment) { return fail(failure) }
         presentAsProduct()
         let networkLayout = NetworkServiceLayout(bundle: bundle)
+        var asksForBridged = false
+        guard case .success = resolveSettings(bridgedNetwork: {
+            asksForBridged = true
+            return .available
+        }), asksForBridged else { return launch(networkLayout: networkLayout, bridgedNetwork: nil) }
         let productName = configuration.productName
-        let settings: VMRunLaunchSettings
-        switch VMRunLaunchSettings.make(
+        // Asking the daemon can wait for the client's XPC timeout, so it runs
+        // off the main thread and a shutdown stays immediate.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let availability = networkLayout.bridgedNetwork(productName: productName)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard !self.shutdownRequested, !self.finished else { return }
+                    self.launch(networkLayout: networkLayout, bridgedNetwork: availability)
+                }
+            }
+        }
+    }
+
+    private func resolveSettings(bridgedNetwork: () -> BridgedNetworkAvailability)
+        -> Result<VMRunLaunchSettings, VMRunError> {
+        VMRunLaunchSettings.make(
             baseEnvironment: launchEnvironment(),
             configuration: configuration,
             storageLocation: storageLocationStore.load(),
             storageLocationProblem: storageLocationStore.problem(),
             settings: { [unowned self] root in self.vmSettings(root: root) },
-            bridgedNetwork: { networkLayout.bridgedNetwork(productName: productName) },
+            bridgedNetwork: bridgedNetwork,
             metrics: QEMUGPUStorageSpaceEstimate.bundledMetrics(bundle: bundle)
-        ) {
+        )
+    }
+
+    private func launch(networkLayout: NetworkServiceLayout, bridgedNetwork availability: BridgedNetworkAvailability?) {
+        let settings: VMRunLaunchSettings
+        switch resolveSettings(bridgedNetwork: { availability ?? .available }) {
         case .success(let resolved): settings = resolved
         case .failure(let error): return fail(error)
         }

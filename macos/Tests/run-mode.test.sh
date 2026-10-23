@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 
 helper, scratch = Path(sys.argv[1]), Path(sys.argv[2])
 
@@ -344,6 +345,7 @@ client = network / "omarchy-network-client"
 client.write_text("""#!/bin/bash
 [[ $1 == check && $2 == */Contents/Resources ]] || exit 64
 echo "$2" >"$FAKE_NETWORK_CHECKED"
+[[ $FAKE_NETWORK == slow ]] && exec sleep 20
 [[ $FAKE_NETWORK == approved ]] && exit 0
 echo 'Networking service unavailable or this app build is not authorized.' >&2
 exit 1
@@ -358,6 +360,25 @@ if not checked.exists() or b"not authorized" not in b"".join(run.stderr):
 notices, mode, run = stored_bridged_start(FAKE_NETWORK="approved", FAKE_NETWORK_CHECKED=str(checked))
 if mode != "bridged" or notices:
     fail(f"a registered kit daemon started {mode} with {notices}; {run.diagnostics()}")
+
+# A daemon that is slow to answer never holds up a shutdown.
+settings.write_text(json.dumps({"schemaVersion": 1, "settings": {"networkPreferences": {
+    "version": 1, "preferences": {"mode": "bridged", "interface": "en0",
+                                  "wifiCompatibility": False, "bridgedSSH": False}}}}))
+settings.chmod(0o600)
+checked.unlink(missing_ok=True)
+run = RunMode(configuration, FAKE_NETWORK="slow", FAKE_NETWORK_CHECKED=str(checked))
+deadline = time.monotonic() + 10
+while not checked.exists() and time.monotonic() < deadline:
+    time.sleep(0.05)
+if not checked.exists():
+    fail(f"the run mode did not ask the slow client; {run.diagnostics()}")
+asked = time.monotonic()
+run.send("shutdown")
+if run.finish(0) != 0 or time.monotonic() - asked > 5:
+    fail(f"a slow networking check held up the shutdown; {run.diagnostics()}")
+if launcher_log():
+    fail("the launcher started after a shutdown during the networking check")
 settings.unlink()
 
 # The launcher's own explanation becomes a stable error code.
