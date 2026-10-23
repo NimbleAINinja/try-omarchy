@@ -25,6 +25,9 @@ public final class VMRunClient: @unchecked Sendable {
     private var run = 0
 
     public static let errorTailBytes = 16_384
+    /// How long `terminate()` waits for the helper before it kills it.
+    public static let terminationGrace: TimeInterval = 5
+    static let secondSignalDelay: TimeInterval = 0.2
 
     public init(kit: TryOmarchyKit) {
         self.kit = kit
@@ -143,8 +146,9 @@ public final class VMRunClient: @unchecked Sendable {
         try? inputPipe.fileHandleForWriting.write(contentsOf: configurationLine)
     }
 
-    /// Asks Omarchy to shut down. The helper stops the VM if Omarchy has not
-    /// shut down within a minute; `exited` follows either way.
+    /// Asks Omarchy to shut down, as its own Shut Down does. The helper stops
+    /// the VM if Omarchy has not shut down within a minute; `exited` follows
+    /// either way.
     public func shutDown() {
         let input = lock.withLock { finished ? nil : self.input }
         guard let input, let line = try? VMRunCommand.shutdown.encodedLine() else { return }
@@ -152,11 +156,36 @@ public final class VMRunClient: @unchecked Sendable {
     }
 
     /// Stops the VM at once, as pulling the power would, without waiting for
-    /// Omarchy to shut down.
-    public func terminate() {
-        let process = lock.withLock { finished ? nil : self.process }
-        guard let process, process.isRunning else { return }
-        kill(process.processIdentifier, SIGTERM)
+    /// Omarchy to shut down: unsaved work in Omarchy is lost. The helper reads
+    /// a first signal as `shutDown()` and a second as stop now, so this sends
+    /// two. A helper still running after `killAfter` seconds is killed, and
+    /// its launcher, which stops QEMU, is asked to stop. `exited` follows.
+    public func terminate(killAfter: TimeInterval = VMRunClient.terminationGrace) {
+        guard let (process, run) = runningProcess() else { return }
+        let helper = process.processIdentifier
+        kill(helper, SIGTERM)
+        queue.asyncAfter(deadline: .now() + Self.secondSignalDelay) { [weak self] in
+            guard self?.runningProcess()?.1 == run else { return }
+            kill(helper, SIGTERM)
+        }
+        queue.asyncAfter(deadline: .now() + max(killAfter, Self.secondSignalDelay)) { [weak self] in
+            guard self?.runningProcess()?.1 == run else { return }
+            for child in Self.children(of: helper) { kill(child, SIGTERM) }
+            kill(helper, SIGKILL)
+        }
+    }
+
+    private func runningProcess() -> (Process, Int)? {
+        lock.withLock {
+            guard !finished, let process, process.isRunning else { return nil }
+            return (process, run)
+        }
+    }
+
+    private static func children(of parent: pid_t) -> [pid_t] {
+        var children = [pid_t](repeating: 0, count: 256)
+        let count = proc_listchildpids(parent, &children, Int32(children.count * MemoryLayout<pid_t>.stride))
+        return children.prefix(max(0, Int(count))).filter { $0 > 0 }
     }
 
     private func receiveOutput(_ data: Data, run: Int) {

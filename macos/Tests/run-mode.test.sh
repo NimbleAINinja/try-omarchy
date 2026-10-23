@@ -6,7 +6,7 @@
 # server, and its launcher serves QMP but runs no VM. Checks the download,
 # the progress and ready events, shutdown over QMP from the command and from
 # the end of input, the stored settings winning over the configuration, the
-# launcher's errors as stable codes, bridged networking from the
+# launcher's errors as stable codes, signals, bridged networking from the
 # configuration, and the configurations the run mode refuses. Needs no hypervisor and no network.
 
 set -euo pipefail
@@ -25,6 +25,7 @@ from pathlib import Path
 import plistlib
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -143,7 +144,7 @@ def serve(client):
             if "id" in request:
                 response["id"] = request["id"]
             client.sendall(json.dumps(response).encode() + b"\r\n")
-            if command == "system_powerdown":
+            if command == "system_powerdown" and not os.environ.get("FAKE_LINUX_KEEPS_RUNNING"):
                 powered_down.set()
 
 def accept():
@@ -403,6 +404,42 @@ if event["event"] != "error" or event["code"] != "bridged-network-unavailable":
 run.finish(1)
 if launcher_log():
     fail("the launcher started with no adapter to bridge")
+
+# A first signal shuts Omarchy down and waits for it. Two signals, as
+# VMRunClient.terminate() sends them, stop it at once, whether they arrive
+# together or apart.
+def wait_exited(run, within):
+    deadline = time.monotonic() + within
+    while True:
+        event = run.next(timeout=max(0.1, deadline - time.monotonic()))
+        if event["event"] == "exited":
+            run.process.wait(timeout=10)
+            return
+        if event["event"] == "error":
+            fail(f"a forced stop reported an error; {run.diagnostics()}")
+
+
+run = RunMode(configuration, FAKE_LINUX_KEEPS_RUNNING="1")
+run.until("ready")
+run.process.send_signal(signal.SIGTERM)
+if run.next()["event"] != "stopping":
+    fail(f"a signal did not report stopping; {run.diagnostics()}")
+time.sleep(2)
+if run.process.poll() is not None:
+    fail(f"one signal stopped Omarchy without waiting for it; {run.diagnostics()}")
+if {"qmp": "system_powerdown"} not in launcher_log():
+    fail("a signal did not ask Omarchy to shut down")
+run.process.send_signal(signal.SIGTERM)
+wait_exited(run, 5)
+
+run = RunMode(configuration, FAKE_LINUX_KEEPS_RUNNING="1")
+run.until("ready")
+os.kill(run.process.pid, signal.SIGTERM)
+os.kill(run.process.pid, signal.SIGTERM)
+if run.next()["event"] != "stopping":
+    fail(f"two signals did not report stopping; {run.diagnostics()}")
+wait_exited(run, 5)
+launcher_log()
 
 # The launcher's own explanation becomes a stable error code.
 for explanation, code in [("this VM is already open", "vm-already-open"),

@@ -360,6 +360,51 @@ struct VMRunClientTests {
         #expect(events.last == .exited(status: 143))
     }
 
+    @Test func terminateSendsTheSecondSignalThatStopsAtOnce() throws {
+        let (kit, root) = try fakeKit(helper: """
+            #!/bin/bash
+            read -r config
+            signals=0
+            trap 'signals=$((signals + 1))' TERM
+            echo '{"version":1,"event":"ready"}'
+            while ((signals < 2)); do sleep 0.05; done
+            echo '{"version":1,"event":"exited","status":0}'
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = VMRunClient(kit: kit)
+        let recorder = Recorder()
+        recorder.onEvent = { event in if event == .ready { client.terminate(killAfter: 10) } }
+        let started = Date()
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { recorder.record($0) }
+        #expect(recorder.wait() == [.ready, .exited(status: 0)])
+        #expect(Date().timeIntervalSince(started) < 5)
+    }
+
+    @Test func terminateKillsAHelperThatKeepsRunningAndStopsItsLauncher() throws {
+        let launcherStopped = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vm-run-launcher-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: launcherStopped) }
+        let (kit, root) = try fakeKit(helper: """
+            #!/bin/bash
+            read -r config
+            bash -c 'trap "touch \(launcherStopped.path); exit 143" TERM; while :; do sleep 0.05; done' >/dev/null &
+            trap '' TERM
+            echo '{"version":1,"event":"ready"}'
+            while :; do sleep 0.05; done
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = VMRunClient(kit: kit)
+        let recorder = Recorder()
+        recorder.onEvent = { event in if event == .ready { client.terminate(killAfter: 0.5) } }
+        let started = Date()
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { recorder.record($0) }
+        #expect(recorder.wait() == [.ready, .exited(status: 128 + SIGKILL)])
+        #expect(Date().timeIntervalSince(started) < 5)
+        let deadline = Date().addingTimeInterval(5)
+        while !FileManager.default.fileExists(atPath: launcherStopped.path), Date() < deadline { usleep(50_000) }
+        #expect(FileManager.default.fileExists(atPath: launcherStopped.path))
+    }
+
     @Test func refusesAMissingKit() {
         let client = VMRunClient(kit: TryOmarchyKit(bundleURL: URL(fileURLWithPath: "/nonexistent/TryOmarchyKit.bundle")))
         #expect(throws: VMRunError.self) {

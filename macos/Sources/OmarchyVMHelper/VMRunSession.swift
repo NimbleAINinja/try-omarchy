@@ -57,6 +57,7 @@ final class VMRunSession {
     private var activeStateRoot: String?
     private var pendingHostSleepControlFailure: String?
     private var forcedStopTimer: DispatchWorkItem?
+    private var launcherSignalled = false
 
     private(set) var lifecycle = VMRunLifecycle()
     private(set) var isRunning = false
@@ -164,10 +165,14 @@ final class VMRunSession {
         DispatchQueue.main.asyncAfter(deadline: .now() + forceAfter, execute: timer)
     }
 
-    /// Stops the launcher, which stops QEMU and the bridges.
+    /// Stops the launcher, which stops QEMU and the bridges. It gets one
+    /// signal: a second would cut that cleanup short.
     func quit() {
         hostSleepCoordinator.cancelWakeRetry()
         lifecycle.requestQuit()
+        forcedStopTimer?.cancel()
+        guard !launcherSignalled else { return }
+        launcherSignalled = true
         supervisor.forward(signal: SIGTERM)
     }
 
@@ -292,6 +297,7 @@ final class VMRunSession {
                 self?.childDidExit(status: status)
             }
             isRunning = true
+            launcherSignalled = false
         } catch {
             activeStateRoot = nil
             onEvent(.launchFailed(error))

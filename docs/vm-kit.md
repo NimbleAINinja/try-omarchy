@@ -80,7 +80,9 @@ The run mode writes `progress` (a phase and a percent), `notice` (a stable code 
 
 `make test` starts the run mode as a real process (`macos/Tests/run-mode.test.sh`), with a kit whose launcher serves QMP but runs no VM and a factory served on the loopback interface. `OMARCHY_VM_RUN_TEST_SKIP_PREFLIGHT=1` lets it run on CI runners without a hypervisor; `VMRunClient` never passes it on.
 
-The run mode shuts down when it reads the `shutdown` command, when its input closes, or on a first signal. It asks Omarchy to shut down over QMP, waits up to a minute, then stops QEMU. So an app that crashes or is force-quit still shuts Omarchy down. A second signal stops QEMU at once.
+The run mode shuts down when it reads the `shutdown` command, when its input closes, or on a first signal. It asks Omarchy to shut down over QMP, waits up to a minute, then stops QEMU. So an app that crashes or is force-quit still shuts Omarchy down. A second signal stops QEMU at once, even when both arrive together.
+
+The client has both. `shutDown()` sends the command. `terminate()` stops the VM at once, as pulling the power would: it sends two signals, and kills a helper that is still running five seconds later, after asking its launcher to stop QEMU.
 
 The image download pauses on cellular and Low Data Mode connections and keeps the Mac awake.
 

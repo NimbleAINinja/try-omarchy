@@ -305,7 +305,10 @@ do {
                 Darwin.signal(signalNumber, SIG_IGN)
                 let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
                 source.setEventHandler {
-                    MainActor.assumeIsolated { controller.handleTerminationSignal() }
+                    let signals = source.data
+                    MainActor.assumeIsolated {
+                        for _ in 0..<max(1, signals) { controller.handleTerminationSignal() }
+                    }
                 }
                 source.resume()
                 terminationSignalSources.append(source)
