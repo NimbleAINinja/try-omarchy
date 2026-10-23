@@ -48,6 +48,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private let networkPreferences: () -> VMNetworkPreferences
     private let saveNetworkPreferences: (VMNetworkPreferences) -> String?
     private let networkIdentity: VMNetworkIdentityAccess
+    private let networkService: NetworkServiceControls
     private var networkEditor: NetworkEditor?
     private let immersiveMode: () -> Bool
     private let setImmersiveMode: (Bool) -> Void
@@ -135,6 +136,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         networkPreferences: @escaping () -> VMNetworkPreferences = { VMNetworkPreferences() },
         saveNetworkPreferences: @escaping (VMNetworkPreferences) -> String? = { _ in nil },
         networkIdentity: VMNetworkIdentityAccess = .unavailable,
+        networkService: NetworkServiceControls = .thisApp,
         immersiveMode: @escaping () -> Bool = { true },
         setImmersiveMode: @escaping (Bool) -> Void = { _ in },
         notchAvailable: @escaping () -> Bool = { false },
@@ -190,6 +192,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
         self.networkPreferences = networkPreferences
         self.saveNetworkPreferences = saveNetworkPreferences
         self.networkIdentity = networkIdentity
+        self.networkService = networkService
         self.immersiveMode = immersiveMode
         self.setImmersiveMode = setImmersiveMode
         self.notchAvailable = notchAvailable
@@ -504,7 +507,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
             network,
             bridgeAvailable: network.mode != .bridged
                 || VMBridgeInterfaces.available().contains { $0.name == network.interface },
-            serviceEnabled: network.mode != .bridged || NetworkService.service.status == .enabled
+            serviceEnabled: network.mode != .bridged || networkService.isReady()
         )
         state.networkIsBridged = network.mode == .bridged
         state.networkDetail = networkSummary.detail
@@ -728,7 +731,7 @@ final class StartMenuWindow: NSObject, NSWindowDelegate {
     private func beginNetworkConfiguration() {
         guard !controlsBusy, networkEditor == nil else { return }
         let editor = NetworkEditor(preferences: networkPreferences(), interfaces: VMBridgeInterfaces.available(),
-            identity: networkIdentity, save: saveNetworkPreferences, didClose: { [weak self] in
+            identity: networkIdentity, service: networkService, save: saveNetworkPreferences, didClose: { [weak self] in
                 self?.networkEditor = nil
                 self?.refresh()
             })

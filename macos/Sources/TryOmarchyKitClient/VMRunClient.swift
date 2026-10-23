@@ -171,6 +171,8 @@ public final class VMRunClient: @unchecked Sendable {
             switch Result(catching: { try VMRunEvent.decode(line: line) }) {
             case .success(let event):
                 deliver(event)
+            case .failure(VMRunProtocolError.unknownEvent):
+                continue
             case .failure:
                 failProtocol()
             }

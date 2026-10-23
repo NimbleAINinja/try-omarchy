@@ -9,6 +9,11 @@ struct VMRunLaunchSettings {
     let environment: [String: String]
     let stateRoot: URL
     let portForwardMappings: [PortForwardMapping]
+    /// What the bridged check found, when this start asked for bridged
+    /// networking.
+    let bridgedNetwork: BridgedNetworkAvailability?
+    /// Set when a stored bridged choice starts with shared networking instead.
+    let notice: VMRunNotice?
 
     /// Development and test overrides, as with `OMARCHY_QEMU_GPU_STATE_ROOT`.
     /// An embedding app starts the run mode without them (VMRunClient).
@@ -28,7 +33,7 @@ struct VMRunLaunchSettings {
         storageLocation: StorageLocationPreference,
         storageLocationProblem: String? = nil,
         settings: (URL) -> any LauncherSettingsStorage,
-        bridgedNetworkAvailable: Bool,
+        bridgedNetwork: () -> BridgedNetworkAvailability,
         limits: VMResourceLimits = .current,
         connectedUSBDevices: () -> [USBDeviceIdentity] = { HostUSBDevices.connected() },
         homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path,
@@ -58,18 +63,25 @@ struct VMRunLaunchSettings {
         let stored = settings(stateRoot)
 
         var network: VMNetworkPreferences
+        var availability: BridgedNetworkAvailability?
+        var notice: VMRunNotice?
         if stored.settingData(forKey: VMNetworkPreferenceStore.key) != nil {
             network = VMNetworkPreferenceStore(storage: stored).load()
-            if network.mode == .bridged, !bridgedNetworkAvailable {
-                fputs("[network] Bridged networking is not available here; Omarchy starts with shared networking.\n", stderr)
-                network = VMNetworkPreferences()
+            if network.mode == .bridged {
+                availability = bridgedNetwork()
+                if case .unavailable(let reason) = availability {
+                    fputs("[network] \(reason) Omarchy starts with shared networking.\n", stderr)
+                    notice = VMRunNotice(code: .bridgedNetworkUnavailable,
+                                         message: "\(reason) Omarchy starts with shared networking.")
+                    network = VMNetworkPreferences()
+                }
             }
         } else {
             network = VMNetworkPreferences()
             if configuration.network == .bridged {
-                guard bridgedNetworkAvailable else {
-                    return .failure(VMRunError(code: .bridgedNetworkUnavailable,
-                        message: "Bridged networking is not available in \(configuration.productName)."))
+                availability = bridgedNetwork()
+                if case .unavailable(let reason) = availability {
+                    return .failure(VMRunError(code: .bridgedNetworkUnavailable, message: reason))
                 }
                 network.mode = .bridged
             }
@@ -119,7 +131,9 @@ struct VMRunLaunchSettings {
         return .success(Self(
             environment: VMNetworkPolicy.environment(base: resolved, preferences: network),
             stateRoot: stateRoot,
-            portForwardMappings: mappings
+            portForwardMappings: mappings,
+            bridgedNetwork: availability,
+            notice: notice
         ))
     }
 }
@@ -147,17 +161,19 @@ final class VMRunSettingsWindow {
     private let storageLocationStore: StorageLocationPreferenceStore
     private let settings: LauncherSettingsFile
     private let bundle: Bundle
+    private let networkService: NetworkServiceControls
     private let activationController = ApplicationActivationController()
     private var startMenuWindow: StartMenuWindow?
     private var returnApplication: NSRunningApplication?
 
     init(configuration: VMRunConfiguration, stateRoot: URL, storageLocationStore: StorageLocationPreferenceStore,
-         settings: LauncherSettingsFile, bundle: Bundle) {
+         settings: LauncherSettingsFile, bundle: Bundle, networkService: NetworkServiceControls) {
         self.configuration = configuration
         self.stateRoot = stateRoot
         self.storageLocationStore = storageLocationStore
         self.settings = settings
         self.bundle = bundle
+        self.networkService = networkService
         activationController.setDesiredPolicy(.prohibited)
     }
 
@@ -274,6 +290,7 @@ final class VMRunSettingsWindow {
                     try VMNetworkIdentityAccess.operation(arguments, root: stateRoot, resources: resources)
                 }
             } ?? .unavailable,
+            networkService: networkService,
             immersiveMode: { fullscreenStore.load().isImmersive },
             setImmersiveMode: { isImmersive in
                 var preferences = fullscreenStore.load()
