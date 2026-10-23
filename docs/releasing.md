@@ -93,14 +93,7 @@ Outputs are written to:
 - `dist/TryOmarchy.dmg`
 - `dist/guest/`
 
-`make package` and `make release` both create distributable builds: they sign
-the app, the DMG and the kit with Developer ID, submit the DMG and the kit to Apple's notarization
-service, and staple the resulting tickets. Neither command falls back to an
-unnotarized build. Both commands first ensure the content-hashed guest,
-runtime and firmware artifacts are current; packaging and signing themselves always run
-freshly. Development stays at `dist/app.noindex/Try Omarchy.app` with a separate
-bundle ID and privacy grants, so production permission flows can be tested
-independently. Another maintainer can override the release defaults:
+`make package` and `make release` both create distributable builds: they sign the app, the DMG and the kit with Developer ID, submit the DMG and the kit to Apple's notarization service, and staple the resulting tickets. Neither command falls back to an unnotarized build. Both commands first ensure the content-hashed guest, runtime and firmware artifacts are current; packaging and signing themselves always run freshly. Development stays at `dist/app.noindex/Try Omarchy.app` with a separate bundle ID and privacy grants, so production permission flows can be tested independently. Another maintainer can override the release defaults:
 
 ```sh
 make release VERSION=vX.Y.Z \
@@ -113,14 +106,14 @@ make release VERSION=vX.Y.Z \
 The kit is signed and notarized with the app, by the same `make release` (or `make package`), with `RELEASE_SIGN_IDENTITY` and `RELEASE_NOTARY_PROFILE`. There is nothing else to run. `macos/build-kit.sh`, through `scripts/kit_signature.py`:
 
 1. signs every Mach-O in the kit as `dev.tryomarchy.kit`, with the hardened runtime and a secure timestamp. The networking server, supervisor and client come first, because the networking daemon is built after them and pins them. Then, inside out: the libraries, the other tools and the daemon, QEMU with the hypervisor and microphone entitlements, the helper with the camera and microphone entitlements, and the kit's bundle;
-2. checks those signatures, `omarchy-network-daemon check` and the launcher's self-check, and zips the kit into `TryOmarchyKit.zip`;
+2. checks those signatures, then `omarchy-network-daemon check` and the launcher's self-check, and zips the kit into `TryOmarchyKit.zip`;
 3. submits the zip with `xcrun notarytool submit --wait`, and stops unless Apple accepts it;
-4. staples the ticket to the kit's bundle, and zips the stapled kit again;
+4. staples the ticket to the kit's bundle, checks that the helper, QEMU and the daemon are notarized, and zips the stapled kit again;
 5. records the digest of that zip in `TryOmarchyKit.zip.sha256` and copies the manifest to `TryOmarchyKit.json`.
 
-A zip cannot be stapled, so the zip that is published is the one rebuilt from the stapled kit, and its digest is of the published bytes. Apple also serves the ticket online, which a kit without a bundle relies on. The installer downloads kits without the quarantine attribute, so Gatekeeper does not assess them there.
+A zip cannot be stapled, so the zip that is published is the one rebuilt from the stapled kit, and its digest is of the published bytes. The installer downloads kits without the quarantine attribute, so Gatekeeper does not assess them there.
 
-Then `make release` runs `tests/kit/check.sh` on the kit, with `KIT_TEAM_ID` set to the identity's team. It refuses the release if a Mach-O is unsigned, signed by another team or identifier, without the hardened runtime or a timestamp, or with other entitlements than its own, if Gatekeeper rejects the helper or QEMU (it assesses apps, and the kit's bundle is not one), if the networking daemon does not accept the runtime it pinned, or if QEMU does not start with its libraries.
+Then `make release` runs `tests/kit/check.sh` on the kit, with `KIT_TEAM_ID` set to the identity's team and `KIT_NOTARIZED=1`. It refuses the release if a Mach-O is ad hoc, unsigned, signed by another team or identifier, without the hardened runtime or a timestamp, or with other entitlements than its own; if the helper, QEMU or the daemon does not satisfy the `notarized` requirement (`codesign --verify --strict --check-notarization -R=notarized`), or the bundle has no valid stapled ticket; if the networking daemon does not accept the runtime it pinned; or if QEMU does not start with its libraries. It runs the kit's code only once the signatures pass. Gatekeeper's `spctl --assess --type execute` is not used: it rejects every non-app, a helper bundle and a command-line tool alike ("does not seem to be an app").
 
 To try the kit's release signing without notarizing, sign it ad hoc from a production app and check it:
 
@@ -129,7 +122,7 @@ macos/build-kit.sh --app "dist/release.noindex/Try Omarchy.app" --output /tmp/ki
 tests/kit/check.sh /tmp/kit
 ```
 
-The check says which checks an ad hoc kit skips. With the Developer ID identity instead of `-`, the kit is signed as a release is; check it with `KIT_NOTARIZED=0`, since only a notarized kit passes Gatekeeper. Without `--notarize-profile` nothing is sent to Apple.
+The check says which checks an ad hoc kit skips. With the Developer ID identity instead of `-`, the kit is signed as a release is; check it with `KIT_TEAM_ID=<team> KIT_NOTARIZED=0`, since only a notarized kit passes the notarization check. Without `--notarize-profile` nothing is sent to Apple. Do this dry run before tagging a release: nothing else exercises Developer ID signing before `make release`.
 
 To verify a published kit, download `TryOmarchyKit.zip`, `TryOmarchyKit.zip.sha256` and `TryOmarchyKit.json` from the release into an empty folder, then run from the repository:
 
@@ -137,12 +130,12 @@ To verify a published kit, download `TryOmarchyKit.zip`, `TryOmarchyKit.zip.sha2
 kit=/tmp/published-kit
 (cd "$kit" && shasum -a 256 -c TryOmarchyKit.zip.sha256 && ditto -x -k TryOmarchyKit.zip .)
 codesign -dv --verbose=4 "$kit/TryOmarchyKit.bundle/Contents/Resources/runtime/bin/Try Omarchy"
-spctl --assess --type execute -vv "$kit/TryOmarchyKit.bundle/Contents/Resources/runtime/bin/Try Omarchy"
+codesign --verify --strict --check-notarization -R=notarized "$kit/TryOmarchyKit.bundle/Contents/Resources/runtime/bin/Try Omarchy"
 xcrun stapler validate "$kit/TryOmarchyKit.bundle"
-tests/kit/check.sh "$kit"
+KIT_TEAM_ID=RZC79MPD34 KIT_NOTARIZED=1 tests/kit/check.sh "$kit"
 ```
 
-`codesign` shows `Identifier=dev.tryomarchy.kit`, `flags=0x10000(runtime)`, `Authority=Developer ID Application: …`, a `Timestamp` and `TeamIdentifier=RZC79MPD34`. `spctl` says `source=Notarized Developer ID`. The kit check does the same for every Mach-O in the kit.
+`codesign -dv` shows `Identifier=dev.tryomarchy.kit`, `flags=0x10000(runtime)`, `Authority=Developer ID Application: …`, a `Timestamp` and `TeamIdentifier=RZC79MPD34`; the notarization check prints nothing and exits 0; `stapler` says the validate action worked. The kit check does the same for every Mach-O in the kit, and checks the signatures before it runs any of the kit's code.
 
 ## Release checklist
 

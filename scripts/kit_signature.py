@@ -2,7 +2,7 @@
 """Sign the kit's code inside out, check its signatures, and notarize its archive.
 
   kit_signature.py sign [--pinned] --identity IDENTITY KIT
-  kit_signature.py verify [--team TEAM] [--signature-only] KIT
+  kit_signature.py verify [--team TEAM] [--signature-only | --require-notarization] KIT
   kit_signature.py notarize --profile PROFILE ARCHIVE
   kit_signature.py staple KIT
 
@@ -15,6 +15,13 @@ the hardened runtime refuses libraries that have no team.
 The networking daemon pins the bytes of its server and supervisor and the
 signature of its client when it is built. So `sign --pinned` signs those three
 before the daemon is built, and `sign` signs everything else and never them.
+
+`verify` accepts an ad hoc kit unless a team is named with --team (or
+KIT_TEAM_ID) or notarization is required; then every Mach-O must be signed by
+that team. A Developer ID kit must be notarized unless --signature-only:
+the helper, QEMU and the daemon satisfy the `notarized` requirement and the
+bundle has its ticket stapled. The kit's own code runs (the daemon's check)
+only once its signatures pass.
 """
 
 from __future__ import annotations
@@ -50,16 +57,14 @@ class Layout:
     helper: Path
     daemon: Path
     pinned: tuple[Path, ...]
-    bundle: Path | None
+    bundle: Path
 
-    def gatekeeper_targets(self) -> list[Path]:
-        """Gatekeeper assesses apps; the kit's bundle is not one, so it assesses the code that runs."""
-        return [self.helper, self.qemu]
+    def notarized_code(self) -> list[Path]:
+        return [self.helper, self.qemu, self.daemon]
 
 
 def layout(kit: Path) -> Layout:
-    """Where the kit's code is: the one place that knows the kit is a bundle.
-    A kit of plain helpers has no bundle to seal, verify deeply or staple."""
+    """Where the kit's code is: the one place that knows the kit's layout."""
     contents = kit / "Contents"
     network = contents / "Resources/network"
     return Layout(code=kit, qemu=contents / "Resources/runtime/bin/Try Omarchy",
@@ -124,7 +129,7 @@ def sign(path: Path, identity: str, pinned: bool = False) -> None:
             raise ValueError(f"the kit has no {missing[0].relative_to(kit.code)}")
         codes = list(kit.pinned)
     else:
-        codes = [code for code in code_files(kit) if code not in kit.pinned] + ([kit.bundle] if kit.bundle else [])
+        codes = [code for code in code_files(kit) if code not in kit.pinned] + [kit.bundle]
     for code in codes:
         entitlements = entitlements_for(kit, code)
         extra = ["--entitlements", str(entitlements)] if entitlements else []
@@ -145,7 +150,7 @@ def signed_entitlements(path: Path) -> dict | None:
         return None
 
 
-def verify(path: Path, team: str, gatekeeper: bool) -> list[str]:
+def verify(path: Path, team: str, notarized: bool, require_team: bool = False) -> list[str]:
     """Findings about the kit's signatures; none means it is signed as a release or a test kit."""
     kit = layout(path)
     findings: list[str] = []
@@ -155,9 +160,9 @@ def verify(path: Path, team: str, gatekeeper: bool) -> list[str]:
             findings.append(f"the kit has no {required.relative_to(kit.code)}")
     if findings:
         return findings
-    adhoc = "Signature=adhoc" in run("codesign", "-dv", "--verbose=4", kit.helper).stderr
+    adhoc = not require_team and "Signature=adhoc" in run("codesign", "-dv", "--verbose=4", kit.helper).stderr
     if adhoc:
-        print("kit-signature: ad hoc kit: the team, hardened runtime, timestamp and Gatekeeper checks are skipped")
+        print("kit-signature: ad hoc kit: the team, hardened runtime, timestamp and notarization checks are skipped")
     for code in files:
         where = code.relative_to(kit.code)
         details = run("codesign", "-dv", "--verbose=4", code)
@@ -185,20 +190,24 @@ def verify(path: Path, team: str, gatekeeper: bool) -> list[str]:
         expected = entitlements_for(kit, code)
         if signed_entitlements(code) != (plistlib.loads(expected.read_bytes()) if expected else {}):
             findings.append(f"{where} carries other entitlements than {expected.name if expected else 'none'}")
-    if kit.bundle and run("codesign", "--verify", "--deep", "--strict", kit.bundle).returncode != 0:
+    if run("codesign", "--verify", "--deep", "--strict", kit.bundle).returncode != 0:
         findings.append(f"{kit.bundle.name} does not verify (codesign --verify --deep --strict)")
-    daemon = run(kit.daemon, "check")
-    if daemon.returncode != 0 or daemon.stdout.strip() != NETWORK_SERVICE:
-        findings.append(f"{kit.daemon.relative_to(kit.code)} check does not accept its runtime "
-                        f"({(daemon.stderr or daemon.stdout).strip() or daemon.returncode})")
-    if not adhoc and gatekeeper and not findings:
-        for target in kit.gatekeeper_targets():
-            assessment = run("spctl", "--assess", "--type", "execute", "-vv", target)
-            if assessment.returncode != 0:
-                findings.append(f"Gatekeeper rejects {target.name} ({assessment.stderr.strip()}); "
-                                "a Developer ID kit is published notarized")
+    if not adhoc and notarized and not findings:
+        for code in kit.notarized_code():
+            check = run("codesign", "--verify", "--strict", "--check-notarization", "-R=notarized", code)
+            if check.returncode != 0:
+                findings.append(f"{code.relative_to(kit.code)} is not notarized ({check.stderr.strip()})")
+        stapled = run("xcrun", "stapler", "validate", kit.bundle)
+        if stapled.returncode != 0:
+            findings.append(f"{kit.bundle.name} has no valid stapled ticket "
+                            f"({(stapled.stderr or stapled.stdout).strip()})")
     if not findings:
-        mode = "ad hoc" if adhoc else f"team {team}" + ("" if gatekeeper else ", Gatekeeper not checked")
+        daemon = run(kit.daemon, "check")
+        if daemon.returncode != 0 or daemon.stdout.strip() != NETWORK_SERVICE:
+            findings.append(f"{kit.daemon.relative_to(kit.code)} check does not accept its runtime "
+                            f"({(daemon.stderr or daemon.stdout).strip() or daemon.returncode})")
+    if not findings:
+        mode = "ad hoc" if adhoc else f"team {team}" + ("" if notarized else ", notarization not checked")
         print(f"kit-signature: {len(files)} Mach-O files signed as {IDENTIFIER} ({mode})")
     return findings
 
@@ -221,9 +230,6 @@ def notarize(archive: Path, profile: str) -> None:
 
 def staple(path: Path) -> None:
     kit = layout(path)
-    if not kit.bundle:
-        print("[kit] The kit has no bundle to staple; Gatekeeper finds its ticket online")
-        return
     for action in ("staple", "validate"):
         result = run("xcrun", "stapler", action, kit.bundle)
         if result.returncode != 0:
@@ -239,8 +245,12 @@ def main() -> int:
     signing.add_argument("--identity", required=True)
     signing.add_argument("kit", type=Path)
     checking = commands.add_parser("verify")
-    checking.add_argument("--team", default=os.environ.get("KIT_TEAM_ID") or TEAM)
-    checking.add_argument("--signature-only", action="store_true", help="skip Gatekeeper, before notarization")
+    checking.add_argument("--team", default=os.environ.get("KIT_TEAM_ID") or None,
+                          help="the team every Mach-O must be signed by; refuses an ad hoc kit")
+    stage = checking.add_mutually_exclusive_group()
+    stage.add_argument("--signature-only", action="store_true", help="skip the notarization check")
+    stage.add_argument("--require-notarization", action="store_true",
+                       help="refuse an ad hoc or unnotarized kit")
     checking.add_argument("kit", type=Path)
     notarizing = commands.add_parser("notarize")
     notarizing.add_argument("--profile", required=True)
@@ -251,7 +261,8 @@ def main() -> int:
     if args.command == "sign":
         sign(args.kit, args.identity, args.pinned)
     elif args.command == "verify":
-        findings = verify(args.kit, args.team, not args.signature_only)
+        require_team = args.team is not None or args.require_notarization
+        findings = verify(args.kit, args.team or TEAM, not args.signature_only, require_team)
         for finding in findings:
             print(f"kit-signature: {finding}", file=sys.stderr)
         if findings:

@@ -89,6 +89,11 @@ class KitSignatureTests(unittest.TestCase):
         self.stub("codesign", f'''
             import os, sys
             arguments = sys.argv[1:]
+            if "--check-notarization" in arguments:
+                if os.environ.get("NOTARIZED") == "1":
+                    sys.exit(0)
+                sys.stderr.write("test-requirement: code failed to satisfy specified code requirement(s)\\n")
+                sys.exit(3)
             if arguments[:2] != ["-dv", "--verbose=4"]:
                 os.execv("/usr/bin/codesign", ["codesign", *arguments])
             path = arguments[-1]
@@ -130,12 +135,12 @@ class KitSignatureTests(unittest.TestCase):
         self.sign_kit()
         self.addCleanup(os.environ.pop, "DAEMON_SERVICE")
         os.environ["DAEMON_SERVICE"] = "dev.tryomarchy.network"
-        [finding] = kit_signature.verify(self.kit, TEAM, gatekeeper=False)
+        [finding] = kit_signature.verify(self.kit, TEAM, notarized=False)
         self.assertIn("Contents/MacOS/omarchy-network-daemon check does not accept its runtime", finding)
 
     def test_an_ad_hoc_kit_passes_with_its_entitlements(self) -> None:
         self.sign_kit()
-        self.assertEqual(kit_signature.verify(self.kit, TEAM, gatekeeper=True), [])
+        self.assertEqual(kit_signature.verify(self.kit, TEAM, notarized=True), [])
         self.assertEqual(kit_signature.signed_entitlements(self.layout.qemu),
                          plistlib.loads(kit_signature.QEMU_ENTITLEMENTS.read_bytes()))
         self.assertEqual(kit_signature.signed_entitlements(self.layout.helper),
@@ -145,7 +150,7 @@ class KitSignatureTests(unittest.TestCase):
         self.sign_kit()
         library = self.kit / "Contents/Resources/runtime/lib/libfixture.dylib"
         subprocess.run(["codesign", "--remove-signature", library], check=True)
-        findings = kit_signature.verify(self.kit, TEAM, gatekeeper=False)
+        findings = kit_signature.verify(self.kit, TEAM, notarized=False)
         self.assertIn("Contents/Resources/runtime/lib/libfixture.dylib is not signed", findings)
 
     def test_refuses_another_identifier_or_other_entitlements(self) -> None:
@@ -154,7 +159,7 @@ class KitSignatureTests(unittest.TestCase):
                         self.kit / "Contents/Resources/runtime/bin/zstd"], check=True, capture_output=True)
         subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", "dev.tryomarchy.kit",
                         self.layout.qemu], check=True, capture_output=True)
-        findings = kit_signature.verify(self.kit, TEAM, gatekeeper=False)
+        findings = kit_signature.verify(self.kit, TEAM, notarized=False)
         self.assertIn("Contents/Resources/runtime/bin/zstd is not signed as dev.tryomarchy.kit", findings)
         self.assertIn("Contents/Resources/runtime/bin/Try Omarchy carries other entitlements than "
                       "qemu-hvf.entitlements", findings)
@@ -162,7 +167,7 @@ class KitSignatureTests(unittest.TestCase):
     def test_refuses_a_mach_o_signed_by_another_team(self) -> None:
         self.sign_kit()
         self.developer_id({"libfixture.dylib": OTHER_TEAM})
-        self.assertEqual(kit_signature.verify(self.kit, TEAM, gatekeeper=False), [
+        self.assertEqual(kit_signature.verify(self.kit, TEAM, notarized=False), [
             f"Contents/Resources/runtime/lib/libfixture.dylib is signed by team {OTHER_TEAM}, not {TEAM}",
         ])
 
@@ -176,25 +181,59 @@ class KitSignatureTests(unittest.TestCase):
                 sys.exit(0)
             os.execv("/usr/bin/codesign", ["codesign", *arguments])
         ''')
-        self.assertEqual(kit_signature.verify(self.kit, TEAM, gatekeeper=False), [
+        self.assertEqual(kit_signature.verify(self.kit, TEAM, notarized=False), [
             "Contents/Resources/runtime/bin/zstd is signed by a team, and the helper ad hoc",
         ])
 
-    def test_a_developer_id_kit_needs_gatekeeper(self) -> None:
+    def test_a_developer_id_kit_must_be_notarized_and_stapled(self) -> None:
         self.sign_kit()
         self.developer_id({})
-        self.stub("spctl", '''
-            import sys
-            sys.stderr.write(sys.argv[-1] + ": rejected\\nsource=Unnotarized Developer ID\\n")
-            sys.exit(3)
+        self.stub("xcrun", '''
+            import os, sys
+            if sys.argv[1:3] == ["stapler", "validate"] and os.environ.get("STAPLED") != "1":
+                print(sys.argv[-1] + " does not have a ticket stapled to it.")
+                sys.exit(65)
         ''')
-        self.assertEqual(kit_signature.verify(self.kit, TEAM, gatekeeper=False), [])
-        helper, qemu = kit_signature.verify(self.kit, TEAM, gatekeeper=True)
-        self.assertIn("Gatekeeper rejects omarchy-vm-helper", helper)
-        self.assertIn("Gatekeeper rejects Try Omarchy", qemu)
-        self.assertIn("Unnotarized Developer ID", qemu)
-        self.stub("spctl", "import sys\nsys.exit(0)\n")
-        self.assertEqual(kit_signature.verify(self.kit, TEAM, gatekeeper=True), [])
+        for name in ("NOTARIZED", "STAPLED"):
+            self.addCleanup(os.environ.pop, name, None)
+        self.assertEqual(kit_signature.verify(self.kit, TEAM, notarized=False), [])
+        findings = kit_signature.verify(self.kit, TEAM, notarized=True)
+        self.assertEqual([finding.split(" (")[0] for finding in findings], [
+            "Contents/MacOS/omarchy-vm-helper is not notarized",
+            "Contents/Resources/runtime/bin/Try Omarchy is not notarized",
+            "Contents/MacOS/omarchy-network-daemon is not notarized",
+            "TryOmarchyKit.bundle has no valid stapled ticket",
+        ])
+        os.environ["NOTARIZED"] = "1"
+        self.assertEqual(kit_signature.verify(self.kit, TEAM, notarized=True), [
+            f"TryOmarchyKit.bundle has no valid stapled ticket ({self.kit} does not have a ticket stapled to it.)",
+        ])
+        os.environ["STAPLED"] = "1"
+        self.assertEqual(kit_signature.verify(self.kit, TEAM, notarized=True), [])
+
+    def test_a_required_team_refuses_an_ad_hoc_kit(self) -> None:
+        self.sign_kit()
+        self.assertEqual(kit_signature.verify(self.kit, TEAM, notarized=True), [])
+        findings = kit_signature.verify(self.kit, TEAM, notarized=True, require_team=True)
+        self.assertIn("Contents/MacOS/omarchy-vm-helper is not signed with a Developer ID Application certificate",
+                      findings)
+        self.assertIn(f"Contents/Resources/runtime/bin/zstd is signed by team not set, not {TEAM}", findings)
+
+    def test_the_kits_code_runs_only_after_its_signatures_pass(self) -> None:
+        self.sign_kit()
+        marker = self.work / "daemon-ran"
+        self.layout.daemon.unlink()
+        self.layout.daemon.write_text(f"#!/bin/sh\ntouch '{marker}'\necho dev.tryomarchy.kit.network\n")
+        self.layout.daemon.chmod(0o755)
+        findings = kit_signature.verify(self.kit, TEAM, notarized=False)
+        self.assertIn("the kit has no Contents/MacOS/omarchy-network-daemon", findings)
+        self.assertFalse(marker.exists())
+        shutil.copy2(self.daemon, self.layout.daemon)
+        library = self.kit / "Contents/Resources/runtime/lib/libfixture.dylib"
+        subprocess.run(["codesign", "--remove-signature", library], check=True)
+        findings = kit_signature.verify(self.kit, TEAM, notarized=False)
+        self.assertIn("Contents/Resources/runtime/lib/libfixture.dylib is not signed", findings)
+        self.assertFalse(any("check does not accept" in finding for finding in findings), findings)
 
     def test_notarization_must_be_accepted(self) -> None:
         archive = self.work / "TryOmarchyKit.zip"

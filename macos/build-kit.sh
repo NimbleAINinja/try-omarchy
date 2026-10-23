@@ -119,7 +119,7 @@ if [[ -n $notarize_profile ]]; then
   python3 "$repo_dir/scripts/kit_signature.py" staple "$kit"
   rm "$archive"
   (cd "$output" && ditto -c -k --keepParent "$kit_name" "$archive")
-  python3 "$repo_dir/scripts/kit_signature.py" verify ${team[@]+"${team[@]}"} "$kit"
+  python3 "$repo_dir/scripts/kit_signature.py" verify --require-notarization ${team[@]+"${team[@]}"} "$kit"
 fi
 digest=$(/usr/bin/shasum -a 256 "$archive" | cut -d' ' -f1)
 printf '%s  %s\n' "$digest" "${archive##*/}" >"$archive.sha256"

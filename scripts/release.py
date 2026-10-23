@@ -155,7 +155,7 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
 
 
 def check_kit(root: Path, identity: str) -> None:
-    """The published kit: every Mach-O signed by the release's team, accepted by Gatekeeper, and working."""
+    """The published kit: every Mach-O signed by the release's team, notarized and stapled, and working."""
     team = re.search(r"\(([A-Z0-9]+)\)$", identity)
     environment = dict(os.environ, KIT_TEAM_ID=team[1] if team else "", KIT_NOTARIZED="1")
     subprocess.run([str(root / "tests/kit/check.sh"), str(root / "dist/kit.noindex")], env=environment, check=True)

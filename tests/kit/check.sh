@@ -8,9 +8,10 @@
 #
 #   tests/kit/check.sh [KIT_DIR]    (default: dist/kit.noindex, from make kit)
 #
-# A Developer ID kit must be signed by team KIT_TEAM_ID (default RZC79MPD34)
-# and accepted by Gatekeeper; KIT_NOTARIZED=0 skips Gatekeeper for a kit that
-# was signed but not notarized. An ad hoc kit skips both.
+# KIT_TEAM_ID requires every Mach-O to be signed by that team, refusing an ad
+# hoc kit. KIT_NOTARIZED=1 requires a notarized, stapled kit; KIT_NOTARIZED=0
+# skips that check for a kit signed but not notarized. Unset, an ad hoc kit
+# passes, and a Developer ID kit must be signed by RZC79MPD34 and notarized.
 
 set -euo pipefail
 
@@ -44,7 +45,12 @@ diff -rq "$kit" "$scratch/unpacked/$kit_name" >/dev/null || fail "the archive's 
 codesign --verify --deep --strict "$scratch/unpacked/$kit_name" || fail "the archive's kit has an invalid signature"
 codesign --verify --deep --strict "$kit" || fail "the kit has an invalid signature"
 signature_options=()
-[[ ${KIT_NOTARIZED:-1} != 0 ]] || signature_options=(--signature-only)
+case ${KIT_NOTARIZED:-} in
+  0) signature_options=(--signature-only) ;;
+  1) signature_options=(--require-notarization) ;;
+  '') ;;
+  *) fail "KIT_NOTARIZED must be 0 or 1" ;;
+esac
 python3 "$root/scripts/kit_signature.py" verify ${signature_options[@]+"${signature_options[@]}"} \
   "$scratch/unpacked/$kit_name" || fail "the archive's kit is not signed as one kit"
 "$scratch/unpacked/$kit_name/Contents/Resources/runtime/bin/Try Omarchy" --version >/dev/null ||
