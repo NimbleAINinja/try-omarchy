@@ -201,9 +201,29 @@ public struct VMRunError: Error, Equatable, Sendable, LocalizedError {
     public var errorDescription: String? { message }
 }
 
+/// What the run mode did differently from what was asked, while Omarchy
+/// starts anyway. Codes do not change between versions; messages may.
+public enum VMRunNoticeCode: String, CaseIterable, Sendable {
+    /// Bridged networking was chosen but cannot start, so Omarchy starts with
+    /// shared networking. An embedding app that registers the kit's
+    /// networking daemon can offer to set it up.
+    case bridgedNetworkUnavailable = "bridged-network-unavailable"
+}
+
+public struct VMRunNotice: Equatable, Sendable {
+    public let code: VMRunNoticeCode
+    public let message: String
+
+    public init(code: VMRunNoticeCode, message: String) {
+        self.code = code
+        self.message = message
+    }
+}
+
 public enum VMRunEvent: Equatable, Sendable {
     /// Percent is 0 to 100, or nil while the step cannot be measured.
     case progress(VMRunPhase, percent: Int?)
+    case notice(VMRunNotice)
     case ready
     case stopping
     case error(VMRunError)
@@ -217,6 +237,10 @@ public enum VMRunEvent: Equatable, Sendable {
             object["event"] = "progress"
             object["phase"] = phase.rawValue
             if let percent { object["percent"] = min(100, max(0, percent)) }
+        case .notice(let notice):
+            object["event"] = "notice"
+            object["code"] = notice.code.rawValue
+            object["message"] = String(notice.message.prefix(4_096))
         case .ready:
             object["event"] = "ready"
         case .stopping:
@@ -232,6 +256,8 @@ public enum VMRunEvent: Equatable, Sendable {
         return try VMRunLine.encode(object)
     }
 
+    /// An event or notice code this version does not know throws
+    /// `unknownEvent`, which a reader skips: newer kits may add them.
     public static func decode(line: Data) throws -> Self {
         let object = try VMRunLine.decode(line)
         guard VMRunLine.integer(object["version"]) == VMRunProtocol.version,
@@ -255,6 +281,13 @@ public enum VMRunEvent: Equatable, Sendable {
                 percent = number
             }
             return .progress(phase, percent: percent)
+        case "notice":
+            guard let codeName = object["code"] as? String,
+                  let message = object["message"] as? String,
+                  message.utf8.count <= 16_384 else { throw VMRunProtocolError.invalidEvent }
+            guard let code = VMRunNoticeCode(rawValue: codeName) else { throw VMRunProtocolError.unknownEvent }
+            try require(["code", "message"])
+            return .notice(VMRunNotice(code: code, message: message))
         case "ready":
             try require([])
             return .ready
@@ -275,7 +308,7 @@ public enum VMRunEvent: Equatable, Sendable {
             }
             return .exited(status: Int32(status))
         default:
-            throw VMRunProtocolError.invalidEvent
+            throw VMRunProtocolError.unknownEvent
         }
     }
 }
@@ -284,6 +317,7 @@ public enum VMRunProtocolError: Error, Equatable, Sendable {
     case invalidConfiguration
     case invalidCommand
     case invalidEvent
+    case unknownEvent
     case lineTooLong
 }
 

@@ -2,8 +2,8 @@
 #
 # Checks a built kit the way an embedding app receives it (docs/vm-kit.md):
 # the archive and its digest, the bundle and the signature of every Mach-O in
-# it, QEMU starting with its libraries, the manifest, the guest resources, no
-# bridged-networking daemon, the launcher's self-check, and the run mode's
+# it, QEMU starting with its libraries, the manifest, the guest resources, the
+# bridged-networking runtime, the launcher's self-check, and the run mode's
 # refusals from the kit's own helper. Starts no VM.
 #
 #   tests/kit/check.sh [KIT_DIR]    (default: dist/kit.noindex, from make kit)
@@ -56,11 +56,23 @@ info() { /usr/bin/plutil -extract "$1" raw -o - "$contents/Info.plist" 2>/dev/nu
 python3 "$root/scripts/kit_manifest.py" --root "$root" --check "$resources/kit.json" >/dev/null || fail "kit.json is invalid"
 cmp -s "$resources/kit.json" "$output/TryOmarchyKit.json" || fail "TryOmarchyKit.json differs from the kit's kit.json"
 
-# Bridged networking needs the full app's daemon; the kit leaves it out.
-[[ ! -e $contents/Library && ! -e $resources/network && ! -e $contents/MacOS/omarchy-network-daemon ]] ||
-  fail "the kit carries the bridged-networking daemon"
-[[ -z $(find "$kit" -path '*LaunchDaemons*' -print -quit) ]] || fail "the kit carries a launch daemon"
-[[ $(ls "$contents/MacOS") == omarchy-vm-helper ]] || fail "the kit's MacOS folder holds more than the helper"
+# The kit carries its networking daemon for the embedding app to register
+# under its own name, never a job of its own and never the full app's
+# service. The daemon pins the runtime beside it.
+[[ ! -e $contents/Library && -z $(find "$kit" -path '*LaunchDaemons*' -print -quit) ]] ||
+  fail "the kit registers a launch daemon of its own"
+[[ $(ls "$contents/MacOS" | tr '\n' ' ') == 'omarchy-network-daemon omarchy-vm-helper ' ]] ||
+  fail "the kit's MacOS folder holds more than the helper and the networking daemon"
+job="$resources/network/launchd.plist"
+service=$(/usr/bin/plutil -extract Label raw -o - "$job" 2>/dev/null) || fail "the kit has no networking job"
+[[ $service == dev.tryomarchy.kit.network ]] || fail "the kit's networking service is $service"
+python3 -I -c 'import plistlib, sys; job = plistlib.load(open(sys.argv[1], "rb"))
+assert job["MachServices"] == {job["Label"]: True} and job["BundleProgram"] == "Contents/MacOS/omarchy-network-daemon"' "$job" ||
+  fail "the kit's networking job does not name its service and daemon"
+[[ $("$contents/MacOS/omarchy-network-daemon" check) == "$service" ]] || fail "the kit's networking daemon rejects its runtime"
+grep -aq "$service" "$resources/network/omarchy-network-client" &&
+  ! grep -aq 'dev[.]tryomarchy[.]network' "$resources/network/omarchy-network-client" ||
+  fail "the kit's networking client does not ask for the kit's service"
 
 for file in runtime/bin/"Try Omarchy" runtime/bin/zstd scripts/run-qemu-gpu.sh firmware/edk2-aarch64-code.fd \
   guest/factory.json guest/download.json guest/packages.txt guest/SHA256SUMS TryOmarchy.icns; do

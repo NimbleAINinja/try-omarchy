@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sign the kit's code inside out, check its signatures, and notarize its archive.
 
-  kit_signature.py sign --identity IDENTITY KIT
+  kit_signature.py sign [--pinned] --identity IDENTITY KIT
   kit_signature.py verify [--team TEAM] [--signature-only] KIT
   kit_signature.py notarize --profile PROFILE ARCHIVE
   kit_signature.py staple KIT
@@ -11,6 +11,10 @@ the other tools, then QEMU with the hypervisor and microphone, then the helper
 with the camera and microphone. A Developer ID signature carries the hardened
 runtime and a secure timestamp. An ad hoc signature carries neither, because
 the hardened runtime refuses libraries that have no team.
+
+The networking daemon pins the bytes of its server and supervisor and the
+signature of its client when it is built. So `sign --pinned` signs those three
+before the daemon is built, and `sign` signs everything else and never them.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ IDENTIFIER = "dev.tryomarchy.kit"
 TEAM = "RZC79MPD34"
 QEMU_ENTITLEMENTS = ROOT / "macos/qemu-hvf.entitlements"
 HELPER_ENTITLEMENTS = ROOT / "macos/omarchy-vm-helper.entitlements"
+NETWORK_SERVICE = "dev.tryomarchy.kit.network"
 THIN = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"}
 FAT = {b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"}
 LIBRARY_TYPES = {6, 8}
@@ -43,6 +48,8 @@ class Layout:
     code: Path
     qemu: Path
     helper: Path
+    daemon: Path
+    pinned: tuple[Path, ...]
     bundle: Path | None
 
     def gatekeeper_targets(self) -> list[Path]:
@@ -53,8 +60,12 @@ def layout(kit: Path) -> Layout:
     """Where the kit's code is: the one place that knows the kit is a bundle.
     A kit of plain helpers has no bundle to seal, verify deeply or staple."""
     contents = kit / "Contents"
+    network = contents / "Resources/network"
     return Layout(code=kit, qemu=contents / "Resources/runtime/bin/Try Omarchy",
-                  helper=contents / "MacOS/omarchy-vm-helper", bundle=kit)
+                  helper=contents / "MacOS/omarchy-vm-helper", daemon=contents / "MacOS/omarchy-network-daemon",
+                  pinned=tuple(network / name for name in
+                               ("socket_vmnet", "omarchy-network-supervisor", "omarchy-network-client")),
+                  bundle=kit)
 
 
 def macho_type(path: Path) -> int | None:
@@ -101,18 +112,26 @@ def run(*arguments: str | Path) -> subprocess.CompletedProcess:
     return subprocess.run([str(argument) for argument in arguments], capture_output=True, text=True)
 
 
-def sign(path: Path, identity: str) -> None:
+def sign(path: Path, identity: str, pinned: bool = False) -> None:
     kit = layout(path)
     options = ["--force", "--sign", identity, "--identifier", IDENTIFIER]
     if identity != "-":
         options += ["--options", "runtime", "--timestamp"]
-    for code in [*code_files(kit), *([kit.bundle] if kit.bundle else [])]:
+    if pinned:
+        missing = [code for code in kit.pinned if not code.is_file()]
+        if missing:
+            raise ValueError(f"the kit has no {missing[0].relative_to(kit.code)}")
+        codes = list(kit.pinned)
+    else:
+        codes = [code for code in code_files(kit) if code not in kit.pinned] + ([kit.bundle] if kit.bundle else [])
+    for code in codes:
         entitlements = entitlements_for(kit, code)
         extra = ["--entitlements", str(entitlements)] if entitlements else []
         result = run("codesign", *options, *extra, code)
         if result.returncode != 0:
             raise ValueError(f"cannot sign {code.relative_to(kit.code)}: {result.stderr.strip()}")
-    print(f"[kit] Signed the kit's code as {IDENTIFIER} ({'ad hoc' if identity == '-' else identity})")
+    what = "the networking runtime the daemon pins" if pinned else "the kit's code"
+    print(f"[kit] Signed {what} as {IDENTIFIER} ({'ad hoc' if identity == '-' else identity})")
 
 
 def signed_entitlements(path: Path) -> dict | None:
@@ -130,7 +149,7 @@ def verify(path: Path, team: str, gatekeeper: bool) -> list[str]:
     kit = layout(path)
     findings: list[str] = []
     files = code_files(kit)
-    for required in (kit.helper, kit.qemu):
+    for required in (kit.helper, kit.qemu, kit.daemon, *kit.pinned):
         if required not in files:
             findings.append(f"the kit has no {required.relative_to(kit.code)}")
     if findings:
@@ -167,6 +186,10 @@ def verify(path: Path, team: str, gatekeeper: bool) -> list[str]:
             findings.append(f"{where} carries other entitlements than {expected.name if expected else 'none'}")
     if kit.bundle and run("codesign", "--verify", "--deep", "--strict", kit.bundle).returncode != 0:
         findings.append(f"{kit.bundle.name} does not verify (codesign --verify --deep --strict)")
+    daemon = run(kit.daemon, "check")
+    if daemon.returncode != 0 or daemon.stdout.strip() != NETWORK_SERVICE:
+        findings.append(f"{kit.daemon.relative_to(kit.code)} check does not accept its runtime "
+                        f"({(daemon.stderr or daemon.stdout).strip() or daemon.returncode})")
     if not adhoc and gatekeeper and not findings:
         for target in kit.gatekeeper_targets():
             assessment = run("spctl", "--assess", "--type", "execute", "-vv", target)
@@ -211,6 +234,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     signing = commands.add_parser("sign")
+    signing.add_argument("--pinned", action="store_true", help="only what the networking daemon pins")
     signing.add_argument("--identity", required=True)
     signing.add_argument("kit", type=Path)
     checking = commands.add_parser("verify")
@@ -224,7 +248,7 @@ def main() -> int:
     stapling.add_argument("kit", type=Path)
     args = parser.parse_args()
     if args.command == "sign":
-        sign(args.kit, args.identity)
+        sign(args.kit, args.identity, args.pinned)
     elif args.command == "verify":
         findings = verify(args.kit, args.team, not args.signature_only)
         for finding in findings:

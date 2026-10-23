@@ -33,8 +33,14 @@ class KitSignatureTests(unittest.TestCase):
         build = Path(cls.build.name)
         (build / "tool.c").write_text("int main(void) { return 0; }\n")
         (build / "library.c").write_text("int fixture(void) { return 1; }\n")
+        (build / "daemon.c").write_text(
+            '#include <stdio.h>\n#include <stdlib.h>\n'
+            'int main(void) { puts(getenv("DAEMON_SERVICE") ? getenv("DAEMON_SERVICE") : "dev.tryomarchy.kit.network");'
+            ' return 0; }\n')
         subprocess.run(["cc", "-o", build / "tool", build / "tool.c"], check=True)
         subprocess.run(["cc", "-dynamiclib", "-o", build / "library.dylib", build / "library.c"], check=True)
+        subprocess.run(["cc", "-o", build / "daemon", build / "daemon.c"], check=True)
+        cls.daemon = build / "daemon"
         cls.tool = build / "tool"
         cls.library = build / "library.dylib"
 
@@ -49,7 +55,7 @@ class KitSignatureTests(unittest.TestCase):
         self.kit = self.work / "Try Omarchy Kit.app"
         contents = self.kit / "Contents"
         runtime = contents / "Resources/runtime"
-        for directory in (contents / "MacOS", runtime / "bin", runtime / "lib"):
+        for directory in (contents / "MacOS", runtime / "bin", runtime / "lib", contents / "Resources/network"):
             directory.mkdir(parents=True)
         (contents / "Info.plist").write_bytes(plistlib.dumps({
             "CFBundleIdentifier": "dev.tryomarchy.kit", "CFBundleExecutable": "omarchy-vm-helper",
@@ -59,6 +65,9 @@ class KitSignatureTests(unittest.TestCase):
         shutil.copy2(self.tool, runtime / "bin/Try Omarchy")
         shutil.copy2(self.tool, runtime / "bin/zstd")
         shutil.copy2(self.library, runtime / "lib/libfixture.dylib")
+        shutil.copy2(self.daemon, contents / "MacOS/omarchy-network-daemon")
+        for name in ("socket_vmnet", "omarchy-network-supervisor", "omarchy-network-client"):
+            shutil.copy2(self.tool, contents / "Resources/network" / name)
         (contents / "Resources/run-qemu-gpu.sh").write_text("#!/bin/sh\n")
         (runtime / "lib/libfixture.1.dylib").symlink_to("libfixture.dylib")
         self.layout = kit_signature.layout(self.kit)
@@ -96,12 +105,37 @@ class KitSignatureTests(unittest.TestCase):
         self.assertEqual(names, [
             "Contents/Resources/runtime/lib/libfixture.dylib",
             "Contents/Resources/runtime/bin/zstd",
+            "Contents/Resources/network/omarchy-network-client",
+            "Contents/Resources/network/omarchy-network-supervisor",
+            "Contents/Resources/network/socket_vmnet",
+            "Contents/MacOS/omarchy-network-daemon",
             "Contents/Resources/runtime/bin/Try Omarchy",
             "Contents/MacOS/omarchy-vm-helper",
         ])
 
-    def test_an_ad_hoc_kit_passes_with_its_entitlements(self) -> None:
+    def sign_kit(self) -> None:
+        kit_signature.sign(self.kit, "-", pinned=True)
         kit_signature.sign(self.kit, "-")
+
+    def test_never_re_signs_what_the_networking_daemon_pins(self) -> None:
+        kit_signature.sign(self.kit, "-", pinned=True)
+        pinned = {path: path.read_bytes() for path in self.layout.pinned}
+        for path in pinned:
+            self.assertIn("Identifier=dev.tryomarchy.kit\n", kit_signature.run("codesign", "-dv", path).stderr)
+        self.assertNotIn("Identifier=dev.tryomarchy.kit\n", kit_signature.run("codesign", "-dv", self.layout.daemon).stderr)
+        kit_signature.sign(self.kit, "-")
+        self.assertEqual({path: path.read_bytes() for path in pinned}, pinned)
+        self.assertIn("Identifier=dev.tryomarchy.kit\n", kit_signature.run("codesign", "-dv", self.layout.daemon).stderr)
+
+    def test_refuses_a_daemon_that_rejects_its_runtime(self) -> None:
+        self.sign_kit()
+        self.addCleanup(os.environ.pop, "DAEMON_SERVICE")
+        os.environ["DAEMON_SERVICE"] = "dev.tryomarchy.network"
+        [finding] = kit_signature.verify(self.kit, TEAM, gatekeeper=False)
+        self.assertIn("Contents/MacOS/omarchy-network-daemon check does not accept its runtime", finding)
+
+    def test_an_ad_hoc_kit_passes_with_its_entitlements(self) -> None:
+        self.sign_kit()
         self.assertEqual(kit_signature.verify(self.kit, TEAM, gatekeeper=True), [])
         self.assertEqual(kit_signature.signed_entitlements(self.layout.qemu),
                          plistlib.loads(kit_signature.QEMU_ENTITLEMENTS.read_bytes()))
@@ -109,14 +143,14 @@ class KitSignatureTests(unittest.TestCase):
                          plistlib.loads(kit_signature.HELPER_ENTITLEMENTS.read_bytes()))
 
     def test_refuses_an_unsigned_mach_o(self) -> None:
-        kit_signature.sign(self.kit, "-")
+        self.sign_kit()
         library = self.kit / "Contents/Resources/runtime/lib/libfixture.dylib"
         subprocess.run(["codesign", "--remove-signature", library], check=True)
         findings = kit_signature.verify(self.kit, TEAM, gatekeeper=False)
         self.assertIn("Contents/Resources/runtime/lib/libfixture.dylib is not signed", findings)
 
     def test_refuses_another_identifier_or_other_entitlements(self) -> None:
-        kit_signature.sign(self.kit, "-")
+        self.sign_kit()
         subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", "dev.example.other",
                         self.kit / "Contents/Resources/runtime/bin/zstd"], check=True, capture_output=True)
         subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", "dev.tryomarchy.kit",
@@ -127,14 +161,14 @@ class KitSignatureTests(unittest.TestCase):
                       "qemu-hvf.entitlements", findings)
 
     def test_refuses_a_mach_o_signed_by_another_team(self) -> None:
-        kit_signature.sign(self.kit, "-")
+        self.sign_kit()
         self.developer_id({"libfixture.dylib": OTHER_TEAM})
         self.assertEqual(kit_signature.verify(self.kit, TEAM, gatekeeper=False), [
             f"Contents/Resources/runtime/lib/libfixture.dylib is signed by team {OTHER_TEAM}, not {TEAM}",
         ])
 
     def test_refuses_a_team_signed_mach_o_in_an_ad_hoc_kit(self) -> None:
-        kit_signature.sign(self.kit, "-")
+        self.sign_kit()
         self.stub("codesign", '''
             import os, sys
             arguments = sys.argv[1:]
@@ -148,7 +182,7 @@ class KitSignatureTests(unittest.TestCase):
         ])
 
     def test_a_developer_id_kit_needs_gatekeeper(self) -> None:
-        kit_signature.sign(self.kit, "-")
+        self.sign_kit()
         self.developer_id({})
         self.stub("spctl", '''
             import sys

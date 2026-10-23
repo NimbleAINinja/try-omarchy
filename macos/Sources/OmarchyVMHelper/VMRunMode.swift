@@ -22,6 +22,7 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
                                                       legacyIsWritable: false)
     )
     private var stateRoot: URL?
+    private var bridgedNetwork: BridgedNetworkAvailability?
     private var settingsBridge: NativeSettingsBridge?
     private var settingsWindow: VMRunSettingsWindow?
 
@@ -46,6 +47,8 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         guard !shutdownRequested else { return finish(status: 0) }
         if let failure = Self.preflight(environment: baseEnvironment) { return fail(failure) }
         presentAsProduct()
+        let networkLayout = NetworkServiceLayout(bundle: bundle)
+        let productName = configuration.productName
         let settings: VMRunLaunchSettings
         switch VMRunLaunchSettings.make(
             baseEnvironment: launchEnvironment(),
@@ -53,13 +56,15 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
             storageLocation: storageLocationStore.load(),
             storageLocationProblem: storageLocationStore.problem(),
             settings: { [unowned self] root in self.vmSettings(root: root) },
-            bridgedNetworkAvailable: Self.bundlesNetworkService(bundle),
+            bridgedNetwork: { networkLayout.bridgedNetwork(productName: productName) },
             metrics: QEMUGPUStorageSpaceEstimate.bundledMetrics(bundle: bundle)
         ) {
         case .success(let resolved): settings = resolved
         case .failure(let error): return fail(error)
         }
         stateRoot = settings.stateRoot
+        bridgedNetwork = settings.bridgedNetwork
+        if let notice = settings.notice { emit(.notice(notice)) }
         let context = VMRunSession.LaunchContext(
             environment: settings.environment,
             stateRoot: settings.stateRoot.path,
@@ -67,7 +72,8 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
             mayCreateFactoryRoot: true
         )
         session.start(arguments: [], context: { context }, beforeLaunch: { context in
-            if context.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue {
+            if networkLayout.registration == .thisApp,
+               context.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue {
                 try NetworkService.prepare()
                 try NetworkService.verifyConnection()
             }
@@ -168,7 +174,11 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
                         stateRoot: stateRoot,
                         storageLocationStore: self.storageLocationStore,
                         settings: self.vmSettings(root: stateRoot),
-                        bundle: self.bundle
+                        bundle: self.bundle,
+                        networkService: NetworkServiceControls.forRunMode(
+                            layout: NetworkServiceLayout(bundle: self.bundle),
+                            productName: self.configuration.productName,
+                            bridgedNetwork: self.bridgedNetwork)
                     )
                 }
                 return self.settingsWindow?.show() ?? false
@@ -237,11 +247,6 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
 
     static func preflight(environment: [String: String]) -> VMRunError? {
         environment[skipPreflightKey] == "1" ? nil : VMRunClient.preflight()
-    }
-
-    private static func bundlesNetworkService(_ bundle: Bundle) -> Bool {
-        FileManager.default.fileExists(atPath: bundle.bundleURL
-            .appendingPathComponent("Contents/Library/LaunchDaemons/dev.tryomarchy.network.plist").path)
     }
 }
 

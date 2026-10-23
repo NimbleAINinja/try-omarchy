@@ -112,15 +112,15 @@ make release VERSION=vX.Y.Z \
 
 The kit is signed and notarized with the app, by the same `make release` (or `make package`), with `RELEASE_SIGN_IDENTITY` and `RELEASE_NOTARY_PROFILE`. There is nothing else to run. `macos/build-kit.sh`, through `scripts/kit_signature.py`:
 
-1. signs every Mach-O in the kit as `dev.tryomarchy.kit`, with the hardened runtime and a secure timestamp, inside out: the libraries, then the other tools, then QEMU with the hypervisor and microphone entitlements, then the helper with the camera and microphone entitlements, then the kit's bundle;
-2. checks those signatures and the launcher's self-check, and zips the kit into `TryOmarchyKit.zip`;
+1. signs every Mach-O in the kit as `dev.tryomarchy.kit`, with the hardened runtime and a secure timestamp. The networking server, supervisor and client come first, because the networking daemon is built after them and pins them. Then, inside out: the libraries, the other tools and the daemon, QEMU with the hypervisor and microphone entitlements, the helper with the camera and microphone entitlements, and the kit's bundle;
+2. checks those signatures, `omarchy-network-daemon check` and the launcher's self-check, and zips the kit into `TryOmarchyKit.zip`;
 3. submits the zip with `xcrun notarytool submit --wait`, and stops unless Apple accepts it;
 4. staples the ticket to the kit's bundle, and zips the stapled kit again;
 5. records the digest of that zip in `TryOmarchyKit.zip.sha256` and copies the manifest to `TryOmarchyKit.json`.
 
 A zip cannot be stapled, so the zip that is published is the one rebuilt from the stapled kit, and its digest is of the published bytes. Apple also serves the ticket online, which a kit without a bundle relies on. The installer downloads kits without the quarantine attribute, so Gatekeeper does not assess them there.
 
-Then `make release` runs `tests/kit/check.sh` on the kit, with `KIT_TEAM_ID` set to the identity's team. It refuses the release if a Mach-O is unsigned, signed by another team or identifier, without the hardened runtime or a timestamp, or with other entitlements than its own, if Gatekeeper rejects the kit, or if QEMU does not start with its libraries.
+Then `make release` runs `tests/kit/check.sh` on the kit, with `KIT_TEAM_ID` set to the identity's team. It refuses the release if a Mach-O is unsigned, signed by another team or identifier, without the hardened runtime or a timestamp, or with other entitlements than its own, if Gatekeeper rejects the kit, if the networking daemon does not accept the runtime it pinned, or if QEMU does not start with its libraries.
 
 To try the kit's release signing without notarizing, sign it ad hoc from a production app and check it:
 

@@ -339,7 +339,7 @@ codesign "${qemu_sign_options[@]}" \
   --entitlements "$macos_dir/qemu-hvf.entitlements" \
   "$bundled_qemu"
 
-bash "$macos_dir/network-helper/build-daemon.sh" "$contents"
+bash "$macos_dir/network-helper/build-daemon.sh" "$contents/MacOS/omarchy-network-daemon" "$contents/Resources"
 codesign "${sign_options[@]}" "$contents/MacOS/omarchy-network-daemon"
 codesign "${app_sign_options[@]}" \
   --entitlements "$macos_dir/omarchy-vm-helper.entitlements" \
