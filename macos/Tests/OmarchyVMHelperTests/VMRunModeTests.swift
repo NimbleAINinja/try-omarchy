@@ -8,6 +8,7 @@ struct VMRunProtocolTests {
         let events: [VMRunEvent] = [
             .progress(.downloading, percent: 42),
             .progress(.checking, percent: nil),
+            .notice(VMRunNotice(code: .bridgedNetworkUnavailable, message: "Omarchy starts with shared networking.")),
             .ready,
             .stopping,
             .error(VMRunError(code: .vmAlreadyOpen, message: "Omarchy is open in Try Omarchy.")),
@@ -28,6 +29,17 @@ struct VMRunProtocolTests {
             let event = VMRunEvent.error(VMRunError(code: code, message: code.rawValue))
             #expect(try VMRunEvent.decode(line: event.encodedLine()) == event)
         }
+        for code in VMRunNoticeCode.allCases {
+            let event = VMRunEvent.notice(VMRunNotice(code: code, message: code.rawValue))
+            #expect(try VMRunEvent.decode(line: event.encodedLine()) == event)
+        }
+    }
+
+    @Test func eventsANewerKitAddsAreSkippable() {
+        for line in [#"{"version":1,"event":"launched"}"#,
+                     #"{"version":1,"event":"notice","code":"usb-device-missing","message":"x","device":"y"}"#] {
+            #expect(throws: VMRunProtocolError.unknownEvent) { try VMRunEvent.decode(line: Data(line.utf8)) }
+        }
     }
 
     @Test func eventsAreValidatedStrictly() {
@@ -42,6 +54,9 @@ struct VMRunProtocolTests {
             #"{"version":1,"event":"progress","phase":"teleporting"}"#,
             #"{"version":1,"event":"error","code":"gone","message":"x"}"#,
             #"{"version":1,"event":"error","code":"qemu-exited"}"#,
+            #"{"version":1,"event":"notice","code":"bridged-network-unavailable"}"#,
+            #"{"version":1,"event":"notice","code":"bridged-network-unavailable","message":"x","extra":1}"#,
+            #"{"version":1,"event":"notice","code":7,"message":"x"}"#,
             #"{"version":1,"event":"exited","status":256}"#,
             #"{"version":1,"event":"exited","status":"0"}"#,
             #"["version",1]"#,
@@ -286,6 +301,24 @@ struct VMRunClientTests {
         #expect(second.wait() == [.ready, .exited(status: 0)])
     }
 
+    @Test func skipsEventsItDoesNotKnow() throws {
+        let (kit, root) = try fakeKit(helper: """
+            #!/bin/bash
+            read -r config
+            echo '{"version":1,"event":"teleported"}'
+            echo '{"version":1,"event":"notice","code":"bridged-network-unavailable","message":"Shared instead."}'
+            echo '{"version":1,"event":"ready"}'
+            echo '{"version":1,"event":"exited","status":0}'
+            """)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let client = VMRunClient(kit: kit)
+        let recorder = Recorder()
+        try client.start(VMRunConfiguration(productName: "Omarchy Installer"), environment: [:]) { recorder.record($0) }
+        #expect(recorder.wait() == [
+            .notice(VMRunNotice(code: .bridgedNetworkUnavailable, message: "Shared instead.")), .ready, .exited(status: 0),
+        ])
+    }
+
     @Test func reportsAnExitWithoutTheLastEvent() throws {
         let (kit, root) = try fakeKit(helper: "#!/bin/bash\nread -r config\nexit 3\n")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -301,7 +334,7 @@ struct VMRunClientTests {
             #!/bin/bash
             read -r config
             trap 'exit 143' TERM
-            echo '{"version":1,"event":"teleported"}'
+            echo '{"version":2,"event":"ready"}'
             while :; do sleep 0.1; done
             """)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -392,14 +425,14 @@ struct VMRunLaunchSettingsTests {
         _ configuration: VMRunConfiguration,
         storageLocation: StorageLocationPreference = .default,
         environment: [String: String] = [:],
-        bridgedNetworkAvailable: Bool = false
+        bridgedNetwork: BridgedNetworkAvailability = .unavailable("Bridged networking is not available in Omarchy Installer.")
     ) -> Result<VMRunLaunchSettings, VMRunError> {
         VMRunLaunchSettings.make(
             baseEnvironment: environment,
             configuration: configuration,
             storageLocation: storageLocation,
             settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
-            bridgedNetworkAvailable: bridgedNetworkAvailable,
+            bridgedNetwork: { bridgedNetwork },
             limits: limits,
             connectedUSBDevices: { [] },
             homeDirectory: "/Users/nobody",
@@ -454,15 +487,47 @@ struct VMRunLaunchSettingsTests {
         let fixture = try LauncherSettingsFixture()
         try fixture.markWorkspace()
         let bridged = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path, network: .bridged)
-        guard case .failure(let error) = resolve(bridged) else { Issue.record("bridged started without the daemon"); return }
-        #expect(error.code == .bridgedNetworkUnavailable)
-        #expect(try resolve(bridged, bridgedNetworkAvailable: true).get()
-            .environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue)
+        let unavailable = BridgedNetworkAvailability.unavailable("Omarchy Installer has not set up its networking helper.")
+        guard case .failure(let error) = resolve(bridged, bridgedNetwork: unavailable) else {
+            Issue.record("bridged started without the daemon"); return
+        }
+        #expect(error == VMRunError(code: .bridgedNetworkUnavailable,
+                                    message: "Omarchy Installer has not set up its networking helper."))
+        let started = try resolve(bridged, bridgedNetwork: .available).get()
+        #expect(started.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue)
+        #expect(started.bridgedNetwork == .available && started.notice == nil)
+    }
 
+    @Test func aStoredBridgedChoiceStartsSharedAndSaysSo() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
         try VMNetworkPreferenceStore(storage: fixture.vmSettings(legacy: false))
             .save(VMNetworkPreferences(mode: .bridged, interface: "en0"))
         let shared = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path)
-        #expect(try resolve(shared).get().environment[VMNetworkPolicy.modeKey] == VMNetworkMode.nat.rawValue)
+        let unavailable = BridgedNetworkAvailability.unavailable("Omarchy Installer has not set up its networking helper.")
+        let fallback = try resolve(shared, bridgedNetwork: unavailable).get()
+        #expect(fallback.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.nat.rawValue)
+        #expect(fallback.bridgedNetwork == unavailable)
+        #expect(fallback.notice == VMRunNotice(code: .bridgedNetworkUnavailable,
+            message: "Omarchy Installer has not set up its networking helper. Omarchy starts with shared networking."))
+
+        let bridged = try resolve(shared, bridgedNetwork: .available).get()
+        #expect(bridged.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue)
+        #expect(bridged.notice == nil)
+    }
+
+    @Test func sharedNetworkingNeverAsksTheDaemon() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let configuration = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path)
+        let resolved = VMRunLaunchSettings.make(
+            baseEnvironment: [:], configuration: configuration, storageLocation: .default,
+            settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
+            bridgedNetwork: { Issue.record("checked bridged networking"); return .available },
+            limits: limits, connectedUSBDevices: { [] },
+            homeDirectory: "/Users/nobody", metrics: nil, probe: Volume(), volumeRootDetector: NotVolumeRoot())
+        let settings = try resolved.get()
+        #expect(settings.bridgedNetwork == nil && settings.notice == nil)
     }
 
     @Test func theStoredFolderWinsAndTheEnvironmentOverrideWinsOverIt() throws {
@@ -506,7 +571,8 @@ struct VMRunLaunchSettingsTests {
             baseEnvironment: [:], configuration: configuration, storageLocation: .default,
             storageLocationProblem: "storage-location.json is not a private file.",
             settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
-            bridgedNetworkAvailable: false, limits: limits, connectedUSBDevices: { [] },
+            bridgedNetwork: { Issue.record("checked bridged networking"); return .available },
+            limits: limits, connectedUSBDevices: { [] },
             homeDirectory: "/Users/nobody", metrics: nil, probe: Volume(), volumeRootDetector: NotVolumeRoot())
         guard case .failure(let error) = resolved else { Issue.record("started without knowing the VM folder"); return }
         #expect(error.code == .storageUnavailable)

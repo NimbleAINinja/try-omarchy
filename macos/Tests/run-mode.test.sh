@@ -312,6 +312,54 @@ if entries[0]["environment"].get("OMARCHY_QEMU_GPU_IMMERSIVE") != "0":
 if {"qmp": "system_powerdown"} not in entries:
     fail(f"the end of input did not reach QMP: {entries}")
 
+# A stored bridged choice that cannot start says so in a notice, then starts
+# with shared networking. A kit asks the daemon its embedding app registered,
+# through the kit's client, before it starts anything.
+def stored_bridged_start(**environment):
+    settings.write_text(json.dumps({"schemaVersion": 1, "settings": {"networkPreferences": {
+        "version": 1, "preferences": {"mode": "bridged", "interface": "en0",
+                                      "wifiCompatibility": False, "bridgedSSH": False}}}}))
+    settings.chmod(0o600)
+    run = RunMode(configuration, **environment)
+    run.until("ready")
+    notices = [event for event in run.seen if event["event"] == "notice"]
+    run.send("shutdown")
+    run.until("exited")
+    run.process.wait(timeout=10)
+    mode = launcher_log()[0]["environment"].get("OMARCHY_NETWORK_MODE")
+    return notices, mode, run
+
+
+notices, mode, run = stored_bridged_start()
+if mode != "nat" or [notice["code"] for notice in notices] != ["bridged-network-unavailable"]:
+    fail(f"a kit without a networking runtime started {mode} with {notices}; {run.diagnostics()}")
+if run.seen[0]["event"] != "notice" or "Run Mode Test" not in notices[0]["message"]:
+    fail(f"the notice did not come first or name the product: {run.seen}")
+
+network = contents / "Resources/network"
+network.mkdir()
+(network / "launchd.plist").write_bytes(plistlib.dumps({"Label": "dev.tryomarchy.kit.network"}))
+(contents / "MacOS/omarchy-network-daemon").write_text("")
+client = network / "omarchy-network-client"
+client.write_text("""#!/bin/bash
+[[ $1 == check && $2 == */Contents/Resources ]] || exit 64
+echo "$2" >"$FAKE_NETWORK_CHECKED"
+[[ $FAKE_NETWORK == approved ]] && exit 0
+echo 'Networking service unavailable or this app build is not authorized.' >&2
+exit 1
+""")
+client.chmod(0o755)
+checked = scratch / "network-checked"
+notices, mode, run = stored_bridged_start(FAKE_NETWORK="missing", FAKE_NETWORK_CHECKED=str(checked))
+if mode != "nat" or [notice["code"] for notice in notices] != ["bridged-network-unavailable"]:
+    fail(f"an unregistered kit daemon started {mode} with {notices}; {run.diagnostics()}")
+if not checked.exists() or b"not authorized" not in b"".join(run.stderr):
+    fail(f"the run mode did not ask the kit's client or log its answer; {run.diagnostics()}")
+notices, mode, run = stored_bridged_start(FAKE_NETWORK="approved", FAKE_NETWORK_CHECKED=str(checked))
+if mode != "bridged" or notices:
+    fail(f"a registered kit daemon started {mode} with {notices}; {run.diagnostics()}")
+settings.unlink()
+
 # The launcher's own explanation becomes a stable error code.
 for explanation, code in [("this VM is already open", "vm-already-open"),
                           ("the Omarchy VM requires an APFS volume; /Volumes/X is on exfat", "volume-not-apfs"),
