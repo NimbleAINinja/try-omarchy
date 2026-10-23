@@ -50,10 +50,10 @@ jobs:
       # The kit from this runtime, the way make kit builds it, but from a
       # stand-in for dist/guest: the factory needs privileged ARM64 Docker,
       # and a kit carries only the image's download manifest. make test-kit
-      # checks the archive and digest, the signature of every Mach-O, QEMU
-      # starting with its libraries, kit.json, that no bridged-networking
-      # daemon is inside, the launcher's self-check, and the run mode of the
-      # kit's own helper.
+      # checks the archive and digest, the signature of every Mach-O, that the
+      # kit has no bundle identity, QEMU starting with its libraries, kit.json,
+      # the bridged-networking runtime and its pins, the launcher's
+      # self-check, and the run mode of the kit's own helper.
       - name: Build and check the kit
         if: matrix.target == 'runtime'
         run: |

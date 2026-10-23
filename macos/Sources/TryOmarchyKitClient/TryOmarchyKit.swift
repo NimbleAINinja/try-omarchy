@@ -12,7 +12,6 @@ public struct TryOmarchyKit: Sendable {
     /// `Contents/Helpers`.
     public static let bundleName = "TryOmarchyKit.bundle"
     public static let helperName = "omarchy-vm-helper"
-    /// Where the helper and the manifest are inside the kit's folder.
     public static let helperPath = "Contents/MacOS/\(helperName)"
     public static let manifestPath = "Contents/Resources/\(TryOmarchyKitManifest.fileName)"
 

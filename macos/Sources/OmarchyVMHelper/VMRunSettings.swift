@@ -9,10 +9,7 @@ struct VMRunLaunchSettings {
     let environment: [String: String]
     let stateRoot: URL
     let portForwardMappings: [PortForwardMapping]
-    /// What the bridged check found, when this start asked for bridged
-    /// networking.
     let bridgedNetwork: BridgedNetworkAvailability?
-    /// Set when a stored bridged choice starts with shared networking instead.
     let notice: VMRunNotice?
 
     /// Development and test overrides, as with `OMARCHY_QEMU_GPU_STATE_ROOT`.

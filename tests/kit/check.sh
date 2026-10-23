@@ -56,7 +56,6 @@ python3 "$root/scripts/kit_signature.py" verify ${signature_options[@]+"${signat
 "$scratch/unpacked/$kit_name/Contents/Resources/runtime/bin/Try Omarchy" --version >/dev/null ||
   fail "the archive's QEMU does not start with its libraries"
 
-# The kit has no identity of its own: it runs as the app that embeds it.
 python3 -I -c 'import plistlib, sys; assert plistlib.load(open(sys.argv[1], "rb")) == {
     "CFBundleExecutable": "omarchy-vm-helper", "CFBundlePackageType": "BNDL",
     "LSUIElement": True, "NSHighResolutionCapable": True}' "$contents/Info.plist" ||
