@@ -6,9 +6,9 @@ Status: proposed on 2026-10-22. It replaces the installer trial plan of the same
 
 [Omarchy Installer](https://github.com/omacom/omarchy-mac-installer) becomes the one app for Omarchy on a Mac. It has two modes, **Install** and **Try**. Install puts Omarchy on the Mac's own hardware. Try runs it in a virtual machine, in a window beside macOS.
 
-- On a Mac the installer supports, the first page offers both: **Install on this Mac** and **Try in a VM**.
-- On a Mac it cannot install on, and on a Mac with Omarchy already installed, the one app is Try. The reason is one line on the page, and whatever the installer can still do for that Mac stays in its menu.
-- Once a VM exists, the one app opens straight into Try and starts Omarchy. **Install on this Mac** moves to the menu and to the page while Omarchy runs.
+- The first page offers both, side by side: **Install on this Mac** and **Try in a VM**.
+- On a Mac it cannot install on, and on a Mac with Omarchy already installed, Install stays on the page, unavailable, with the reason under it. Whatever the installer can still do for that Mac stays in its menu.
+- Once a VM exists, the one app opens straight into Try and starts Omarchy, and **Install on this Mac** becomes **Migrate to Native**.
 
 Shells all the way down: Try is a shell for Omarchy, and the installer is a shell for Try. This repository is the source of Try: the kit, the client that starts it, and the `try-omarchy` guest package. The installer embeds one kit and fetches newer ones, so Try updates without an installer release. Try Omarchy as its own download ends once the one app ships with the kit's settings ([retiring the full app](#retiring-the-full-app)).
 
@@ -23,23 +23,26 @@ Shells all the way down: Try is a shell for Omarchy, and the installer is a shel
 ## First launch
 
 1. The one app inspects the Mac, as the installer does today.
-2. A supported Mac sees the choice page: this Mac in a line, then **Install on this Mac** and **Try in a VM**. Install continues into the plan the installer shows today. Try opens the Try page.
-3. An unsupported Mac sees the Try page at once. The line under the Mac's name says why Omarchy cannot be installed on it, and **Check again** stays in the menu. A Mac that fails only the disk check gets the same page, because the VM needs free space, not a partition.
-4. A Mac with Omarchy already installed natively sees the Try page too, with the line saying Omarchy is installed. **Remove Omarchy…** stays in the Installation menu, as today.
+2. The first page is the landing page: this Mac in a line, then two buttons side by side, **Install on this Mac** on the left and **Try in a VM** on the right, each with a line under it.
+3. Install continues into the plan the installer shows today. While the Mac is checked, Install is unavailable and says so.
+4. On a Mac Omarchy cannot be installed on, Install stays unavailable, with the reason under it, **Details** and **Check again**. A Mac that fails only the disk check can still try Omarchy, because the VM needs free space, not a partition.
+5. On a Mac with Omarchy already installed natively, Install is unavailable, with a line saying Omarchy is installed. **Remove Omarchy…** stays in the Installation menu, as today.
+6. **Try in a VM** is always available. It opens the Try page, whose **Back** returns to the landing page.
 
-The Try page is the trial's Try screen as built: Accessibility, so Command works as Super, the microphone and the camera, all optional, the space the VM needs and the space free, and **Download and start**.
+The Try page is the trial's Try screen as built: Accessibility, so Command works as Super, the microphone and the camera, all optional, the space the VM needs and the space free, and **Download and start**. The free space in the header and on the Try page is one reading, so the same disk shows the same number on both.
 
 ## Try
 
-Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. While Omarchy runs, the page shows its state, **Shut Down** and, on a supported Mac, **Install on this Mac**. The page also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
+Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. While Omarchy runs, the page shows its state, **Shut Down** and, on a supported Mac, **Migrate to Native** ([install from Try](#install-from-try)). The page also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
 
 A VM is the remembered choice, in the default folder or in the folder chosen in Try Omarchy ([finding the VM](vm-kit.md#finding-the-vm)). Every later launch:
 
-- skips the choice page and starts Omarchy at once, with the page showing its state;
-- still inspects the Mac in the background, so Install knows whether this Mac is supported;
-- offers **Install on this Mac…** in the Installation menu, beside **Remove Omarchy…**.
+- starts Omarchy at once, with the page showing its state, when the one app has every permission the Try page offers or has started Omarchy before;
+- otherwise shows the landing page, with **Migrate to Native** and **Try in a VM**, and Try opens the Try page with **Allow** and **Start**, as on the first launch after Try Omarchy 1.2;
+- still inspects the Mac in the background, so Migrate to Native knows whether this Mac is supported;
+- offers **Migrate to Native…** in the Installation menu, beside **Remove Omarchy…**.
 
-**Delete Virtual Machine…** in the same menu removes a VM in the default folder, after a confirmation that names the space it frees, and returns the one app to the first launch. A VM in a folder chosen in Try Omarchy is Try Omarchy's to move or delete.
+**Delete Virtual Machine…** in the same menu removes a VM in the default folder, after a confirmation that names the space it frees, and returns the one app to the landing page. A VM in a folder chosen in Try Omarchy is Try Omarchy's to move or delete.
 
 Shut Down, quitting the app and closing the Omarchy window shut Omarchy down over QMP, wait up to a minute, and then stop QEMU, as today. The app shows **Shutting down** until the VM has exited and quits only then.
 
@@ -53,7 +56,9 @@ The settings move out of the app's preferences domain into a file in the VM's fo
 
 ## Install from Try
 
-**Install on this Mac**, from the running page or the menu, shuts Omarchy down and continues into the plan. On an unsupported Mac the menu item opens the reason instead, with **Check again**.
+Once a VM exists, **Install on this Mac** reads **Migrate to Native**, on the landing page, on the running page and in the Installation menu. It is available when Install would be, and unavailable for the same reasons. On an unsupported Mac the menu item opens the reason instead, with **Check again**.
+
+Moving the VM's home folder into the native install is planned, not built: Omarchy will export it from inside the VM, and the installer will restore it on the native install. Until then, Migrate to Native says that moving the files is coming, with **Install Without Migrating** and **Cancel**, the default button. Install Without Migrating shuts Omarchy down if it runs and continues into the plan.
 
 The plan review counts the space the VM's folder actually uses against free space, as the trial does today. The native install leaves the VM in place. Whether the review offers to delete it first stays an [open question](#open-questions).
 
@@ -115,7 +120,7 @@ Next, in this repository:
 
 Next, in the installer:
 
-1. Done: the choice page on a supported Mac, and the Try page as the only page on an unsupported Mac or one with Omarchy installed.
+1. Done: the landing page, with **Install on this Mac** and **Try in a VM** side by side on every Mac, and **Migrate to Native** once a VM exists.
 2. Done: the remembered choice: a VM in the default folder opens Try and starts Omarchy, with the inspection in the background.
 3. Done: **Install on this Mac…** and **Delete Virtual Machine…** in the Installation menu, and the Allow rows on the running page.
 4. Done: the **Open in Try Omarchy** handoff is gone, and `vm-already-open` names Try Omarchy.
@@ -126,8 +131,8 @@ Next, in the installer:
 ## Testing
 
 - This repository: `make test` keeps the client's contract tests against the run mode and starts the run mode as a real process, CI builds and checks the kit, and `make e2e` boots the app's VM through the run mode. The settings window in the run mode is checked by hand from Omarchy's Setup menu.
-- The installer: `TrialSessionTests` grow to cover the choice, the remembered choice, the menu items and the pages for an unsupported Mac and an installed one. The assembly test checks the kit's signature under the installer's identity. Kit fetching gets tests for the digest, signature and version checks against fixtures.
-- By hand on a Mac: the first launch on a supported Mac, an unsupported one and one with Omarchy installed; a second launch with a VM; Install on this Mac from the running page and the menu; the settings window from the Setup menu and a setting that applies at the next start; a fetched kit taking over at the next start; Delete Virtual Machine; and the lock error with Try Omarchy running.
+- The installer: `TrialSessionTests` cover the landing page in every state of the inspection, Install's reasons, Try and Back, Migrate to Native and its notice, the remembered choice, the menu items and the two free-space numbers. The assembly test checks the kit's signature under the installer's identity. Kit fetching gets tests for the digest, signature and version checks against fixtures.
+- By hand on a Mac: the landing page on a supported Mac, an unsupported one and one with Omarchy installed; a second launch with a VM; Migrate to Native and its notice from the landing page, the running page and the menu; the settings window from the Setup menu and a setting that applies at the next start; a fetched kit taking over at the next start; Delete Virtual Machine; and the lock error with Try Omarchy running.
 
 Neither repository's CI can boot the VM.
 
