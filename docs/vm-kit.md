@@ -12,11 +12,11 @@ The full app and the run mode run the VM through the same session (`VMRunSession
 
 ## The kit
 
-`make kit` builds a production app, ad-hoc signed, and derives the kit from it (`macos/build-kit.sh`) in `dist/kit.noindex/`. `make package` and `make release` build the kit from the signed release app. `make publish` uploads `TryOmarchyKit.zip` and `TryOmarchyKit.zip.sha256` with the DMG and the image parts.
+`make kit` builds a production app, ad-hoc signed, and derives the kit from it (`macos/build-kit.sh`) in `dist/kit.noindex/`. `make package` and `make release` build the kit from the release app, sign and notarize it ([releasing](releasing.md#the-kit)). `make publish` uploads `TryOmarchyKit.zip` and `TryOmarchyKit.zip.sha256` with the DMG and the image parts.
 
 The kit carries the helper, the QEMU runtime, the firmware, the launch scripts, the `try-omarchy` package and the image's download manifest. It does not carry the image: its first start downloads the parts from the release the kit came from. Releases are never deleted, because installers pinned to an old kit need its parts.
 
-CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature, that the kit has no identity, `kit.json`, the bridged-networking runtime and its pins, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
+CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature of every Mach-O, that the kit has no identity, QEMU starting with its libraries, `kit.json`, the bridged-networking runtime and its pins, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
 
 ### Layout
 
@@ -38,7 +38,13 @@ It stays a bundle, rather than loose files, for three reasons:
 - the signature seals the bundle's scripts, firmware and guest files, so the launcher checks the whole kit before each start (`codesign --verify --deep --strict`);
 - an app's signature treats a folder in `Contents/Helpers` as one nested piece of code only when it is a bundle with an extension; otherwise it expects every file there to be code.
 
-The kit is signed as `dev.tryomarchy.kit`, a code-signing identifier, not a bundle identifier. The embedding app signs the bundle and its Mach-O files as itself, except the networking client, server and supervisor, which the daemon pins ([bridged networking](#bridged-networking)). macOS attributes a helper's permission requests to the app that started it, so it asks for Accessibility, Microphone and Camera in that app's name, with that app's usage descriptions, as long as the app starts the helper as its child. The few values the helper keeps in UserDefaults, such as the last notch measurement, go to the domain macOS names after its file, `omarchy-vm-helper`.
+macOS attributes a helper's permission requests to the app that started it, so it asks for Accessibility, Microphone and Camera in that app's name, with that app's usage descriptions, as long as the app starts the helper as its child. The few values the helper keeps in UserDefaults, such as the last notch measurement, go to the domain macOS names after its file, `omarchy-vm-helper`.
+
+### Signatures
+
+Every Mach-O in a kit, and the bundle, carry the code-signing identifier `dev.tryomarchy.kit`, which is not a bundle identifier, and one signer. A release kit is signed by this repository's team, `RZC79MPD34`, with the hardened runtime and a secure timestamp, and notarized. QEMU carries the hypervisor and microphone entitlements, the helper the camera and microphone, and the rest none. A kit from `make kit` or CI is signed ad hoc, without the hardened runtime, because the hardened runtime refuses libraries that have no team.
+
+An app that embeds the kit re-signs every Mach-O in it as itself, except the networking server, supervisor and client, which the daemon pins ([what the embedding app does](#what-the-embedding-app-does)). An app that fetches a newer kit runs it as the release signed it. Either way macOS asks for Accessibility, Microphone and Camera in the app's name, because the app starts the kit.
 
 ## The kit's version
 

@@ -117,6 +117,18 @@ manifest.parent.mkdir(parents=True, exist_ok=True)
 manifest.write_text(json.dumps({"parts": [{"url": url, "bytes": 5}]}))
 ''')
         builder.chmod(0o755)
+        kit_check = self.root / "tests/kit/check.sh"
+        kit_check.parent.mkdir(parents=True)
+        kit_check.write_text(f'#!{sys.executable}\n' + '''
+import os
+from pathlib import Path
+import sys
+root = Path(__file__).resolve().parents[2]
+(root / "dist/kit-check").write_text(" ".join([sys.argv[1], os.environ["KIT_TEAM_ID"], os.environ["KIT_NOTARIZED"]]))
+if os.environ.get("FAIL_KIT_CHECK"):
+    sys.exit("kit-check: Contents/MacOS/omarchy-vm-helper is signed by team OTHER, not TEST")
+''')
+        kit_check.chmod(0o755)
         self.git("init", "-q")
         self.git("config", "user.name", "Release Tests")
         self.git("config", "user.email", "release-tests@example.invalid")
@@ -203,6 +215,18 @@ manifest.write_text(json.dumps({"parts": [{"url": url, "bytes": 5}]}))
             with self.subTest(version=version):
                 result = self.run_release(WRONG_KIT_VERSION=version)
                 self.assert_failed(result, "the kit's manifest does not name v1.2.3")
+
+    def test_release_checks_the_kit_against_its_team(self) -> None:
+        result = self.run_release()
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(f"{self.root.resolve() / 'dist/kit.noindex'} TEST 1",
+                         (self.root / "dist/kit-check").read_text())
+
+    def test_release_fails_when_the_kit_check_fails_and_keeps_its_tag(self) -> None:
+        result = self.run_release(FAIL_KIT_CHECK="1")
+        self.assert_failed(result, "is signed by team OTHER, not TEST")
+        self.assertIn("Retry with make release VERSION=v1.2.3", result.stderr)
+        self.assertEqual("tag", self.git("cat-file", "-t", "refs/tags/v1.2.3"))
 
     def test_release_requires_stable_dmg(self) -> None:
         for name in ("TryOmarchy-v1.2.3.dmg", "TryOmarchy-v1.2.2.dmg"):

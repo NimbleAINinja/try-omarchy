@@ -109,7 +109,7 @@ Next, in this repository:
 1. Done: the settings bridge and the launcher window in the run mode, named after the product.
 2. Done: settings stored in the VM's folder, and the run mode reading them.
 3. Done: the kit as a helper bundle without a bundle identity, and the product name, icon and menus in the QEMU window.
-4. The kit signed and notarized by its release. Done: a version the installer can compare, in the kit's manifest.
+4. Done: the kit signed and notarized by its release, and a version the installer can compare, in the kit's manifest.
 5. Done: the kit's own bridged-networking daemon, which the embedding app registers as itself ([bridged networking](vm-kit.md#bridged-networking)). Bridged networking from a fetched kit remains.
 6. When the one app ships with settings: stop publishing the DMG, and move the manual.
 

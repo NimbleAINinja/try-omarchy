@@ -154,6 +154,13 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
             raise ValueError(f"factory release asset is missing: {asset}")
 
 
+def check_kit(root: Path, identity: str) -> None:
+    """The published kit: every Mach-O signed by the release's team, accepted by Gatekeeper, and working."""
+    team = re.search(r"\(([A-Z0-9]+)\)$", identity)
+    environment = dict(os.environ, KIT_TEAM_ID=team[1] if team else "", KIT_NOTARIZED="1")
+    subprocess.run([str(root / "tests/kit/check.sh"), str(root / "dist/kit.noindex")], env=environment, check=True)
+
+
 def release_assets(root: Path) -> list[Path]:
     kit = root / "dist/kit.noindex"
     return [root / "dist/TryOmarchy.dmg", kit / "TryOmarchyKit.zip", kit / "TryOmarchyKit.zip.sha256",
@@ -215,6 +222,7 @@ def release(root: Path, make: str) -> None:
             "--sign-identity", identity, "--notarize-profile", profile,
         ], cwd=root, check=True)
         verify_release_artifacts(root, tag)
+        check_kit(root, identity)
         clean_head(root, head)
     except (ValueError, OSError, subprocess.CalledProcessError, KeyboardInterrupt):
         print(f"Local tag {tag} remains. Retry with make release VERSION={tag}", file=sys.stderr)

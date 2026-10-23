@@ -1,12 +1,16 @@
 #!/bin/bash
 #
 # Checks a built kit the way an embedding app receives it (docs/vm-kit.md):
-# the archive and its digest, the bundle and its signature, no bundle
-# identity, the manifest, the guest resources, the bridged-networking runtime,
-# the launcher's self-check, and the run mode's refusals from the kit's own
-# helper. Starts no VM.
+# the archive and its digest, the bundle and the signature of every Mach-O in
+# it, no bundle identity, QEMU starting with its libraries, the manifest, the
+# guest resources, the bridged-networking runtime, the launcher's self-check,
+# and the run mode's refusals from the kit's own helper. Starts no VM.
 #
 #   tests/kit/check.sh [KIT_DIR]    (default: dist/kit.noindex, from make kit)
+#
+# A Developer ID kit must be signed by team KIT_TEAM_ID (default RZC79MPD34)
+# and accepted by Gatekeeper; KIT_NOTARIZED=0 skips Gatekeeper for a kit that
+# was signed but not notarized. An ad hoc kit skips both.
 
 set -euo pipefail
 
@@ -39,6 +43,12 @@ ditto -x -k "$archive" "$scratch/unpacked"
 diff -rq "$kit" "$scratch/unpacked/$kit_name" >/dev/null || fail "the archive's kit differs from the built kit"
 codesign --verify --deep --strict "$scratch/unpacked/$kit_name" || fail "the archive's kit has an invalid signature"
 codesign --verify --deep --strict "$kit" || fail "the kit has an invalid signature"
+signature_options=()
+[[ ${KIT_NOTARIZED:-1} != 0 ]] || signature_options=(--signature-only)
+python3 "$root/scripts/kit_signature.py" verify ${signature_options[@]+"${signature_options[@]}"} \
+  "$scratch/unpacked/$kit_name" || fail "the archive's kit is not signed as one kit"
+"$scratch/unpacked/$kit_name/Contents/Resources/runtime/bin/Try Omarchy" --version >/dev/null ||
+  fail "the archive's QEMU does not start with its libraries"
 
 # The kit has no identity of its own: it runs as the app that embeds it.
 python3 -I -c 'import plistlib, sys; assert plistlib.load(open(sys.argv[1], "rb")) == {
