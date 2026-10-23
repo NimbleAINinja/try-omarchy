@@ -4,11 +4,14 @@
 # VM through the helper's run mode (docs/installer-trial.md). It is the app
 # without its bridged-networking daemon, and it downloads its factory.
 #
-#   macos/build-kit.sh --app APP --output DIR [--sign-identity IDENTITY]
+#   macos/build-kit.sh --app APP --output DIR [--sign-identity IDENTITY] [--notarize-profile PROFILE]
 #
 # Writes DIR/Try Omarchy Kit.app, DIR/TryOmarchyKit.zip, its digest
 # DIR/TryOmarchyKit.zip.sha256, and DIR/TryOmarchyKit.json, a copy of the
-# kit's manifest (docs/vm-kit.md). The embedding app signs the kit as itself.
+# kit's manifest (docs/vm-kit.md). Every Mach-O in the kit is signed with
+# IDENTITY (scripts/kit_signature.py). With PROFILE, a notarytool keychain
+# profile, the archive is notarized and rebuilt from the stapled kit, so the
+# digest is of the published bytes. An embedding app re-signs its own copy.
 
 set -euo pipefail
 
@@ -24,16 +27,20 @@ usage() {
 app=''
 output=''
 sign_identity=-
+notarize_profile=''
 while (($#)); do
   case $1 in
     --app) (($# >= 2)) || usage; app=$2; shift 2 ;;
     --output) (($# >= 2)) || usage; output=$2; shift 2 ;;
     --sign-identity) (($# >= 2)) || usage; sign_identity=$2; shift 2 ;;
+    --notarize-profile) (($# >= 2)) || usage; notarize_profile=$2; shift 2 ;;
     *) usage ;;
   esac
 done
 [[ -n $app && -n $output ]] || usage
 [[ -d $app && ! -L $app ]] || fail "no app at $app"
+[[ -z $notarize_profile || $sign_identity == "Developer ID Application:"* ]] ||
+  fail "notarization requires a Developer ID Application identity"
 macos_dir=$(cd "$(dirname "$0")" && pwd -P)
 repo_dir=$(cd "$macos_dir/.." && pwd -P)
 app=$(cd "$app" && pwd -P)
@@ -70,18 +77,23 @@ path.write_bytes(plistlib.dumps(value))
 PYTHON
 python3 "$repo_dir/scripts/kit_manifest.py" --root "$repo_dir" --app "$app" --output "$contents/Resources/kit.json"
 
-sign_options=(--force --sign "$sign_identity" --identifier dev.tryomarchy.kit
-  --entitlements "$macos_dir/omarchy-vm-helper.entitlements")
-[[ $sign_identity == - ]] || sign_options+=(--options runtime --timestamp)
-codesign "${sign_options[@]}" "$contents/MacOS/omarchy-vm-helper"
-codesign "${sign_options[@]}" "$kit"
-codesign --verify --deep --strict "$kit"
+team=()
+[[ ! $sign_identity =~ \(([A-Z0-9]+)\)$ ]] || team=(--team "${BASH_REMATCH[1]}")
+python3 "$repo_dir/scripts/kit_signature.py" sign --identity "$sign_identity" "$kit"
+python3 "$repo_dir/scripts/kit_signature.py" verify --signature-only ${team[@]+"${team[@]}"} "$kit"
 
 # The kit's launcher must accept the factory it describes.
 OMARCHY_QEMU_GPU_INSPECT_ONLY=1 "$contents/Resources/scripts/run-qemu-gpu.sh" >/dev/null ||
   fail "the kit's launcher rejects its factory"
 
 (cd "$output" && ditto -c -k --keepParent "$kit_name" "$archive")
+if [[ -n $notarize_profile ]]; then
+  python3 "$repo_dir/scripts/kit_signature.py" notarize --profile "$notarize_profile" "$archive"
+  python3 "$repo_dir/scripts/kit_signature.py" staple "$kit"
+  rm "$archive"
+  (cd "$output" && ditto -c -k --keepParent "$kit_name" "$archive")
+  python3 "$repo_dir/scripts/kit_signature.py" verify ${team[@]+"${team[@]}"} "$kit"
+fi
 digest=$(/usr/bin/shasum -a 256 "$archive" | cut -d' ' -f1)
 printf '%s  %s\n' "$digest" "${archive##*/}" >"$archive.sha256"
 cp "$contents/Resources/kit.json" "$manifest"

@@ -21,7 +21,8 @@ the image's parts to dist/factory/ for upload beside the DMG. Production builds
 default to the GitHub release of HEAD's vX.Y.Z tag.
 
 --kit also derives the kit other apps embed (macos/build-kit.sh) into
-dist/kit.noindex/. It needs a build that downloads its factory.
+dist/kit.noindex/, signed with the same identity and, with
+--notarize-profile, notarized. It needs a build that downloads its factory.
 EOF
   exit 64
 }
@@ -358,7 +359,9 @@ codesign --verify --deep --strict --verbose=2 "$app"
 
 echo "[native] Built $app"
 if (( build_kit )); then
-  "$macos_dir/build-kit.sh" --app "$app" --output "$repo_dir/dist/kit.noindex" --sign-identity "$sign_identity"
+  kit_options=(--sign-identity "$sign_identity")
+  [[ -z $notarize_profile ]] || kit_options+=(--notarize-profile "$notarize_profile")
+  "$macos_dir/build-kit.sh" --app "$app" --output "$repo_dir/dist/kit.noindex" "${kit_options[@]}"
 fi
 if (( build_dmg )); then
   dmg="$repo_dir/dist/TryOmarchy.dmg"
