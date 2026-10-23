@@ -33,12 +33,12 @@ The Try page is the trial's Try screen as built: Accessibility, so Command works
 
 ## Try
 
-Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. Once Omarchy's window is up, the installer's window closes, as the launcher's does, and the app stays open with its menus, which have **Shut Down** and **Migrate to Native**. The window comes back when Omarchy shuts down or fails, and the Dock icon or the Window menu brings it back while Omarchy runs. It then shows Omarchy's state, **Shut Down** and, on a supported Mac, **Migrate to Native** ([install from Try](#install-from-try)). It also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
+Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. Once Omarchy's window is up, the installer's window closes and the app leaves the Dock, as the launcher does, so Omarchy's window is the one Dock tile. The window comes back when Omarchy shuts down or fails, and opening the app again brings it back while Omarchy runs. It then shows Omarchy's state, **Shut Down** and, on a supported Mac, **Migrate to Native** ([install from Try](#install-from-try)). It also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
 
 A VM in the default folder is the remembered choice. The one app always boots the default folder ([finding the VM](vm-kit.md#finding-the-vm)). Every later launch:
 
-- starts Omarchy at once, with the page showing its state, when the one app has every permission the Try page offers or has started Omarchy before;
-- otherwise shows the landing page, with **Migrate to Native** and **Try it in a VM**, and Try opens the Try page with **Allow** and **Start**, as on the first launch after Try Omarchy 1.2;
+- opens on the Try page, with **Allow** and **Start**, and starts nothing until the person presses Start;
+- leads back to the landing page, with **Migrate to Native** and **Try it in a VM**, through **Back**;
 - still inspects the Mac in the background, so Migrate to Native knows whether this Mac is supported;
 - offers **Migrate to Native…** in the Installation menu, beside **Remove Omarchy…**.
 
