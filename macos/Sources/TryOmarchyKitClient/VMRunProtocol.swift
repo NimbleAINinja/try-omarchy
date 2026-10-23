@@ -16,6 +16,9 @@ public enum VMRunBridge: String, CaseIterable, Codable, Sendable {
     case timezone
 }
 
+/// `shared` is NAT. `bridged` gives Omarchy its own address on the Mac's
+/// network, through the first interface the Networking settings list, and
+/// needs the embedding app's networking daemon (docs/vm-kit.md).
 public enum VMRunNetwork: String, Codable, Sendable {
     case shared
     case bridged
@@ -39,6 +42,8 @@ public struct VMRunConfiguration: Equatable, Sendable {
     /// launcher's automatic choice.
     public var memoryMiB: Int?
     public var cpus: Int?
+    /// Used when no network is stored. A bridged one that cannot start fails
+    /// with `bridgedNetworkUnavailable`.
     public var network: VMRunNetwork
 
     public init(

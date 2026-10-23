@@ -437,7 +437,9 @@ struct VMRunLaunchSettingsTests {
         _ configuration: VMRunConfiguration,
         storageLocation: StorageLocationPreference = .default,
         environment: [String: String] = [:],
-        bridgedNetwork: BridgedNetworkAvailability = .unavailable("Bridged networking is not available in Omarchy Installer.")
+        bridgedNetwork: BridgedNetworkAvailability = .unavailable("Bridged networking is not available in Omarchy Installer."),
+        bridgeInterfaces: [VMBridgeInterface] = [VMBridgeInterface(name: "en7", title: "USB LAN (en7)", isWiFi: false),
+                                                 VMBridgeInterface(name: "en0", title: "Wi-Fi (en0)", isWiFi: true)]
     ) -> Result<VMRunLaunchSettings, VMRunError> {
         VMRunLaunchSettings.make(
             baseEnvironment: environment,
@@ -445,6 +447,7 @@ struct VMRunLaunchSettingsTests {
             storageLocation: storageLocation,
             settings: { root in LauncherSettingsFile.vmSettings(legacy: nil) { root } },
             bridgedNetwork: { bridgedNetwork },
+            bridgeInterfaces: { bridgeInterfaces },
             limits: limits,
             connectedUSBDevices: { [] },
             homeDirectory: "/Users/nobody",
@@ -508,6 +511,26 @@ struct VMRunLaunchSettingsTests {
         let started = try resolve(bridged, bridgedNetwork: .available).get()
         #expect(started.environment[VMNetworkPolicy.modeKey] == VMNetworkMode.bridged.rawValue)
         #expect(started.bridgedNetwork == .available && started.notice == nil)
+    }
+
+    @Test func bridgedFromTheConfigurationUsesTheInterfaceTheSettingsSelectFirst() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let bridged = VMRunConfiguration(productName: "Omarchy Installer", storageRoot: fixture.root.path, network: .bridged)
+        let wifi = VMBridgeInterface(name: "en0", title: "Wi-Fi (en0)", isWiFi: true)
+        let environment = try resolve(bridged, bridgedNetwork: .available, bridgeInterfaces: [wifi]).get().environment
+        #expect(environment[VMNetworkPolicy.interfaceKey] == "en0")
+        #expect(environment[VMNetworkPolicy.compatibilityKey]
+            == (VMNetworkPolicy.supportsWiFiCompatibility ? "1" : "0"))
+        let wired = try resolve(bridged, bridgedNetwork: .available).get().environment
+        #expect(wired[VMNetworkPolicy.interfaceKey] == "en7")
+        #expect(wired[VMNetworkPolicy.compatibilityKey] == "0")
+        #expect(VMBridgeInterfaces.unchosenDefault(in: [wifi]) == wifi)
+
+        guard case .failure(let error) = resolve(bridged, bridgedNetwork: .available, bridgeInterfaces: []) else {
+            Issue.record("bridged started with no interface to bridge"); return
+        }
+        #expect(error.code == .bridgedNetworkUnavailable)
     }
 
     @Test func aStoredBridgedChoiceStartsSharedAndSaysSo() throws {

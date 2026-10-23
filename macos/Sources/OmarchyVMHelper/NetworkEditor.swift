@@ -54,6 +54,9 @@ final class NetworkEditor: NSObject {
         } else if !preferences.interface.isEmpty {
             interface.addItem(withTitle: "Unavailable: \(preferences.interface)")
             interface.selectItem(at: interfaces.count)
+        } else if let unchosen = VMBridgeInterfaces.unchosenDefault(in: interfaces),
+                  let index = interfaces.firstIndex(of: unchosen) {
+            interface.selectItem(at: index)
         }
         interface.target = self; interface.action = #selector(update)
         interface.setAccessibilityLabel("Bridge interface")

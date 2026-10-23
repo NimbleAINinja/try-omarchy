@@ -6,8 +6,8 @@
 # server, and its launcher serves QMP but runs no VM. Checks the download,
 # the progress and ready events, shutdown over QMP from the command and from
 # the end of input, the stored settings winning over the configuration, the
-# launcher's errors as stable codes, and the configurations the run mode
-# refuses. Needs no hypervisor and no network.
+# launcher's errors as stable codes, bridged networking from the
+# configuration, and the configurations the run mode refuses. Needs no hypervisor and no network.
 
 set -euo pipefail
 macos_dir=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -381,6 +381,29 @@ if launcher_log():
     fail("the launcher started after a shutdown during the networking check")
 settings.unlink()
 
+# Bridged networking in the configuration, with nothing stored, uses the first
+# adapter the Networking settings list, which they select when none is chosen.
+supervisor = network / "omarchy-network-supervisor"
+supervisor.write_text("#!/bin/bash\n[[ $1 == --interfaces ]] || exit 64\nprintf '%s\\n' $FAKE_INTERFACES\n")
+supervisor.chmod(0o755)
+bridged = {**configuration, "network": "bridged"}
+run = RunMode(bridged, FAKE_NETWORK="approved", FAKE_NETWORK_CHECKED=str(checked), FAKE_INTERFACES="en7 en0")
+run.until("ready")
+run.send("shutdown")
+run.until("exited")
+run.process.wait(timeout=10)
+environment = launcher_log()[0]["environment"]
+if (environment.get("OMARCHY_NETWORK_MODE"), environment.get("OMARCHY_NETWORK_INTERFACE")) != ("bridged", "en7"):
+    fail(f"bridged from the configuration started {environment.get('OMARCHY_NETWORK_MODE')} on "
+         f"{environment.get('OMARCHY_NETWORK_INTERFACE')!r}, not on en7; {run.diagnostics()}")
+run = RunMode(bridged, FAKE_NETWORK="approved", FAKE_NETWORK_CHECKED=str(checked), FAKE_INTERFACES="")
+event = run.next()
+if event["event"] != "error" or event["code"] != "bridged-network-unavailable":
+    fail(f"bridged with no adapter to bridge gave {event}; {run.diagnostics()}")
+run.finish(1)
+if launcher_log():
+    fail("the launcher started with no adapter to bridge")
+
 # The launcher's own explanation becomes a stable error code.
 for explanation, code in [("this VM is already open", "vm-already-open"),
                           ("the Omarchy VM requires an APFS volume; /Volumes/X is on exfat", "volume-not-apfs"),
@@ -403,6 +426,8 @@ for line, code, status in [
     ('{"version":1}', "invalid-configuration", 64),
     ("not json", "invalid-configuration", 64),
     (json.dumps({**configuration, "version": 2}), "invalid-configuration", 64),
+    (json.dumps({**configuration, "network": "wifi"}), "invalid-configuration", 64),
+    (json.dumps({key: value for key, value in configuration.items() if key != "network"}), "invalid-configuration", 64),
     (json.dumps({**configuration, "network": "bridged"}), "bridged-network-unavailable", 1),
 ]:
     run = RunMode(line)

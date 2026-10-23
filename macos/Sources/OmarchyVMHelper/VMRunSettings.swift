@@ -31,6 +31,7 @@ struct VMRunLaunchSettings {
         storageLocationProblem: String? = nil,
         settings: (URL) -> any LauncherSettingsStorage,
         bridgedNetwork: () -> BridgedNetworkAvailability,
+        bridgeInterfaces: () -> [VMBridgeInterface] = { VMBridgeInterfaces.available() },
         limits: VMResourceLimits = .current,
         connectedUSBDevices: () -> [USBDeviceIdentity] = { HostUSBDevices.connected() },
         homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path,
@@ -58,6 +59,7 @@ struct VMRunLaunchSettings {
                 message: storage.unavailableReason ?? "The VM's storage folder is not usable."))
         }
         let stored = settings(stateRoot)
+        lazy var interfaces = bridgeInterfaces()
 
         var network: VMNetworkPreferences
         var availability: BridgedNetworkAvailability?
@@ -80,11 +82,16 @@ struct VMRunLaunchSettings {
                 if case .unavailable(let reason) = availability {
                     return .failure(VMRunError(code: .bridgedNetworkUnavailable, message: reason))
                 }
+                guard let interface = VMBridgeInterfaces.unchosenDefault(in: interfaces) else {
+                    return .failure(VMRunError(code: .bridgedNetworkUnavailable,
+                                               message: "This Mac has no network connection Omarchy can bridge."))
+                }
                 network.mode = .bridged
+                network.interface = interface.name
             }
         }
         if network.mode == .bridged,
-           let selected = VMBridgeInterfaces.available().first(where: { $0.name == network.interface }) {
+           let selected = interfaces.first(where: { $0.name == network.interface }) {
             network.wifiCompatibility = VMNetworkPolicy.requiresWiFiCompatibility(
                 isWiFi: selected.isWiFi, supported: VMNetworkPolicy.supportsWiFiCompatibility)
         }

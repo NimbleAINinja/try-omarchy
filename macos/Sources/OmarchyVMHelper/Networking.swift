@@ -107,6 +107,12 @@ enum VMBridgeInterfaces {
             return VMBridgeInterface(name: name, title: "\(label) (\(name))", isWiFi: wifi)
         }
     }
+
+    /// The interface bridged networking uses when none was chosen: the first
+    /// listed, which the Networking settings select until someone picks one.
+    static func unchosenDefault(in interfaces: [VMBridgeInterface]) -> VMBridgeInterface? {
+        interfaces.first
+    }
 }
 
 enum NetworkStartupFailure {
