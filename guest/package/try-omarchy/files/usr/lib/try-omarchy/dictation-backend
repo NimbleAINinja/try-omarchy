@@ -15,8 +15,10 @@ Speech.
 
 ~/.local/state/try-omarchy/dictation-backend exists while the user has chosen
 Apple Speech: {"previous": backend or "", "swapped": what login put in its
-place, or null}. A selection this didn't write is the user's: the record goes
-and nothing is changed back. `login` prints "changed" when it switched.
+place, or null, "stamp": the selection file's inode and mtime after that swap}.
+A selection this didn't write is the user's, even the same backend chosen
+again (Omarchy saves every choice as a new file): the record goes and nothing
+is changed back. `login` prints "changed" when it switched.
 """
 
 import json
@@ -38,6 +40,14 @@ def selected():
         return SELECTION.read_text().split("\n", 1)[0].strip()
     except OSError:
         return ""
+
+
+def stamp():
+    try:
+        status = SELECTION.stat()
+    except OSError:
+        return None
+    return [status.st_ino, status.st_mtime_ns]
 
 
 def use(backend):
@@ -100,9 +110,9 @@ def login():
             return False
         previous = record.get("previous", "")
         use(previous)
-        save({"previous": previous, "swapped": previous})
+        save({"previous": previous, "swapped": previous, "stamp": stamp()})
         return True
-    if current != swapped:
+    if current != swapped or ("stamp" in record and record["stamp"] != stamp()):
         forget()  # the user changed the selection while Dictation was off
         return False
     if not port:

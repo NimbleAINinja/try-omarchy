@@ -33,6 +33,16 @@ enum DictationSupport {
     }
 }
 
+/// A recogniser that fails mid-session must end it then: the microphone keeps
+/// sending levels, so the guest's silence timeout never fires.
+enum RecognitionFailure {
+    static func watch<Value: Sendable>(_ task: Task<Value, Error>, report: @escaping @Sendable (String) -> Void) {
+        Task {
+            if case let .failure(error) = await task.result { report(error.localizedDescription) }
+        }
+    }
+}
+
 enum DictationLocale {
     static let fallback = "en-US"
 

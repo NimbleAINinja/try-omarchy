@@ -26,6 +26,7 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
         case cancel(Int)
         case microphoneChanged
         case timeLimit(Int)
+        case recognitionFailed(Int, String)
         case assetsInstalled(DictationModel)
     }
 
@@ -114,6 +115,8 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
             if session != nil { await end(with: .error("microphone changed")) }
         case let .timeLimit(id):
             if session?.id == id { await end(with: .error("recording stopped after 10 minutes")) }
+        case let .recognitionFailed(id, message):
+            if session?.id == id { await end(with: .error(message)) }
         case let .assetsInstalled(model):
             installing.remove(model)
         }
@@ -248,6 +251,9 @@ final class AppleSpeechDictation: DictationEngine, @unchecked Sendable {
             events(.partial(text.trimmingCharacters(in: .whitespaces)))
         }
         session = Session(id: id, events: events, analyzer: analyzer, input: input, collector: collector)
+        RecognitionFailure.watch(collector) { [weak self] message in
+            self?.commands.yield(.recognitionFailed(id, message))
+        }
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: Self.maximumSessionSeconds * 1_000_000_000)
             self?.commands.yield(.timeLimit(id))

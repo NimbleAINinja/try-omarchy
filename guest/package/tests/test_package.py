@@ -1811,7 +1811,9 @@ class DictationBackend(unittest.TestCase):
         use = self.bin / "omarchy-dictation-use"
         use.write_text('#!/bin/sh\nprintf \'use %s\\n\' "$1" >>"$TEST_LOG"\n'
                        'mkdir -p "$XDG_CONFIG_HOME/omarchy/defaults"\n'
-                       'printf \'%s\\n\' "$1" >"$XDG_CONFIG_HOME/omarchy/defaults/dictation"\n')
+                       'printf \'%s\\n\' "$1" >"$XDG_CONFIG_HOME/omarchy/defaults/dictation.new"\n'
+                       'mv -f "$XDG_CONFIG_HOME/omarchy/defaults/dictation.new" '
+                       '"$XDG_CONFIG_HOME/omarchy/defaults/dictation"\n')
         use.chmod(0o755)
         self.env = {**os.environ, "HOME": str(self.root), "XDG_CONFIG_HOME": str(self.config),
                     "XDG_STATE_HOME": str(self.root / "state"), "OMARCHY_DICTATION_PORT": str(self.port),
@@ -1877,6 +1879,17 @@ class DictationBackend(unittest.TestCase):
         self.dictation_off()
         self.helper("login")
         self.select("voxtype")  # the user picks a backend meanwhile
+        self.dictation_on()
+        self.assertEqual(self.helper("login"), "")
+        self.assertEqual(self.selected(), "voxtype")
+        self.assertFalse(self.state.exists())
+
+    def test_choosing_the_restored_backend_again_is_kept(self):
+        self.select("voxtype")
+        self.helper("select")
+        self.dictation_off()
+        self.helper("login")
+        subprocess.run([str(self.bin / "omarchy-dictation-use"), "voxtype"], env=self.env, check=True)
         self.dictation_on()
         self.assertEqual(self.helper("login"), "")
         self.assertEqual(self.selected(), "voxtype")
