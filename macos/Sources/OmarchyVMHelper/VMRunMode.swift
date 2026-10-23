@@ -23,6 +23,7 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
     )
     private var stateRoot: URL?
     private var bridgedNetwork: BridgedNetworkAvailability?
+    private var currentBridgedNetwork: BridgedNetworkAvailability?
     private var settingsBridge: NativeSettingsBridge?
     private var settingsWindow: VMRunSettingsWindow?
 
@@ -202,13 +203,29 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
                         networkService: NetworkServiceControls.forRunMode(
                             layout: NetworkServiceLayout(bundle: self.bundle),
                             productName: self.configuration.productName,
-                            bridgedNetwork: self.bridgedNetwork)
+                            started: { [weak self] in self?.bridgedNetwork },
+                            current: { [weak self] in self?.currentBridgedNetwork })
                     )
                 }
+                self.recheckBridgedNetwork()
                 return self.settingsWindow?.show() ?? false
             }
         } catch {
             fputs("[settings] \(error.localizedDescription)\n", stderr)
+        }
+    }
+
+    /// The embedding app may set up its daemon while Omarchy runs, so the
+    /// settings window asks again each time it opens, off the main thread.
+    private func recheckBridgedNetwork() {
+        let layout = NetworkServiceLayout(bundle: bundle)
+        guard layout.registration == .embeddingApp else { return }
+        let productName = configuration.productName
+        DispatchQueue.global(qos: .userInitiated).async {
+            let availability = layout.bridgedNetwork(productName: productName)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self.currentBridgedNetwork = availability }
+            }
         }
     }
 

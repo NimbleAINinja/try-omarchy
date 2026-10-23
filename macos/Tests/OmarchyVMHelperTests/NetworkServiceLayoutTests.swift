@@ -92,25 +92,38 @@ struct NetworkServiceLayoutTests {
     @Test func theRunModesSettingsOnlyReportAHelperAnotherAppRegisters() throws {
         let bundle = try Bundle()
         defer { bundle.remove() }
-        let missing = NetworkServiceControls.forRunMode(layout: bundle.layout, productName: "Omarchy Installer",
-                                                        bridgedNetwork: nil)
+        func controls(started: BridgedNetworkAvailability?, current: BridgedNetworkAvailability? = nil,
+                      productName: String = "Omarchy Installer") -> NetworkServiceControls {
+            NetworkServiceControls.forRunMode(layout: bundle.layout, productName: productName,
+                                              started: { started }, current: { current })
+        }
+        let missing = controls(started: nil)
         #expect(missing.repair == nil && missing.remove == nil && !missing.isReady())
         #expect(missing.status() == "Bridged networking is not available in Omarchy Installer.")
 
         try bundle.addKitRuntime()
-        let unchecked = NetworkServiceControls.forRunMode(layout: bundle.layout, productName: "Omarchy Installer",
-                                                          bridgedNetwork: nil)
-        #expect(unchecked.repair == nil && unchecked.isReady())
-        let failed = NetworkServiceControls.forRunMode(layout: bundle.layout, productName: "Omarchy Installer",
-                                                       bridgedNetwork: .unavailable("Not approved."))
+        let shared = controls(started: nil)
+        #expect(shared.repair == nil && !shared.isReady())
+        #expect(shared.status().hasPrefix("Omarchy Installer sets up the networking helper."))
+        let failed = controls(started: .unavailable("Not approved."))
         #expect(failed.status() == "Not approved." && !failed.isReady())
-        let ready = NetworkServiceControls.forRunMode(layout: bundle.layout, productName: "Omarchy Installer",
-                                                      bridgedNetwork: .available)
+        let ready = controls(started: .available)
         #expect(ready.status() == "Networking helper ready" && ready.isReady())
+        let registeredSince = controls(started: .unavailable("Not approved."), current: .available)
+        #expect(registeredSince.status() == "Networking helper ready. Omarchy uses it from the next start.")
+        #expect(registeredSince.isReady())
+        let removedSince = controls(started: .available, current: .unavailable("Not registered."))
+        #expect(removedSince.status() == "Not registered." && !removedSince.isReady())
+
+        var current: BridgedNetworkAvailability?
+        let live = NetworkServiceControls.forRunMode(layout: bundle.layout, productName: "Omarchy Installer",
+                                                     started: { nil }, current: { current })
+        #expect(!live.isReady())
+        current = .available
+        #expect(live.isReady())
 
         try bundle.add(bundle.layout.fullAppJob)
-        let fullApp = NetworkServiceControls.forRunMode(layout: bundle.layout, productName: "Try Omarchy",
-                                                        bridgedNetwork: nil)
+        let fullApp = controls(started: nil, productName: "Try Omarchy")
         #expect(fullApp.repair != nil && fullApp.remove != nil)
     }
 }

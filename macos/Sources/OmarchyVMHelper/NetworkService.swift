@@ -84,22 +84,26 @@ struct NetworkServiceControls {
              remove: { try await NetworkService.remove() })
     }
 
+    /// `started` is what this start found; `current` what the daemon says
+    /// now, once asked again. Both are read each time the window shows them.
     static func forRunMode(layout: NetworkServiceLayout, productName: String,
-                           bridgedNetwork: BridgedNetworkAvailability?) -> Self {
+                           started: @escaping @MainActor () -> BridgedNetworkAvailability?,
+                           current: @escaping @MainActor () -> BridgedNetworkAvailability?) -> Self {
         if layout.registration == .thisApp { return .thisApp }
-        let status: String
-        var ready = layout.registration == .embeddingApp
-        switch bridgedNetwork {
-        case .available:
-            status = "Networking helper ready"
-        case .unavailable(let reason):
-            status = reason
-            ready = false
-        case nil:
-            status = ready
-                ? "\(productName) sets up the networking helper. Until macOS approves it, Omarchy starts with shared networking."
-                : "Bridged networking is not available in \(productName)."
+        let embedded = layout.registration == .embeddingApp
+        @MainActor func state() -> (status: String, ready: Bool) {
+            guard embedded else { return ("Bridged networking is not available in \(productName).", false) }
+            switch current() ?? started() {
+            case .available:
+                return started() == .available
+                    ? ("Networking helper ready", true)
+                    : ("Networking helper ready. Omarchy uses it from the next start.", true)
+            case .unavailable(let reason):
+                return (reason, false)
+            case nil:
+                return ("\(productName) sets up the networking helper. Until macOS approves it, Omarchy starts with shared networking.", false)
+            }
         }
-        return Self(status: { status }, isReady: { [ready] in ready }, repair: nil, remove: nil)
+        return Self(status: { state().status }, isReady: { state().ready }, repair: nil, remove: nil)
     }
 }
