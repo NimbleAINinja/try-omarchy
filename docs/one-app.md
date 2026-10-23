@@ -120,8 +120,8 @@ Next, in the installer:
 3. Done: **Install on this Mac…** and **Delete Virtual Machine…** in the Installation menu, and the Allow rows on the running page.
 4. Done: the **Open in Try Omarchy** handoff is gone, and `vm-already-open` names Try Omarchy.
 5. Done: the kit built into the installer's bundle under its identity.
-6. Fetching, verifying and switching to newer kits.
-7. Registering the kit's networking daemon as the installer, offered on the `bridged-network-unavailable` notice ([what the embedding app does](vm-kit.md#what-the-embedding-app-does)).
+6. Done: fetching, verifying and switching to newer kits.
+7. Done: registering the kit's networking daemon as the installer, offered on the `bridged-network-unavailable` notice ([what the embedding app does](vm-kit.md#what-the-embedding-app-does)).
 
 ## Testing
 
