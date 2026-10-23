@@ -38,16 +38,15 @@ def fail(message):
 
 
 # The kit: the built helper, the launcher below, and a factory to download.
-kit = scratch / "Try Omarchy Kit.app"
+kit = scratch / "TryOmarchyKit.bundle"
 contents = kit / "Contents"
 for folder in ("MacOS", "Resources/scripts", "Resources/guest"):
     (contents / folder).mkdir(parents=True)
 (contents / "Info.plist").write_bytes(plistlib.dumps({
-    "CFBundleIdentifier": "dev.tryomarchy.kit.run-mode-test",
     "CFBundleExecutable": "omarchy-vm-helper",
-    "CFBundleName": "Try Omarchy Kit",
-    "CFBundlePackageType": "APPL",
+    "CFBundlePackageType": "BNDL",
     "LSUIElement": True,
+    "NSHighResolutionCapable": True,
 }))
 shutil.copy2(helper, contents / "MacOS/omarchy-vm-helper")
 

@@ -51,9 +51,10 @@ public enum TryOmarchyKitManifestError: Error, Equatable, Sendable {
     case invalid
 }
 
-/// `Contents/Resources/kit.json`, which build-kit.sh writes into every kit and
-/// each release also publishes as `TryOmarchyKit.json`. Keys a reader does not
-/// know are ignored; `format` changes only when a known key changes meaning.
+/// The kit's `TryOmarchyKit.manifestPath`, which build-kit.sh writes into
+/// every kit and each release also publishes as `TryOmarchyKit.json`. Keys a
+/// reader does not know are ignored; `format` changes only when a known key
+/// changes meaning.
 public struct TryOmarchyKitManifest: Equatable, Sendable {
     public static let fileName = "kit.json"
     public static let format = 1
@@ -90,7 +91,7 @@ public struct TryOmarchyKitManifest: Equatable, Sendable {
 
 extension TryOmarchyKit {
     public var manifestURL: URL {
-        bundleURL.appendingPathComponent("Contents/Resources/\(TryOmarchyKitManifest.fileName)", isDirectory: false)
+        bundleURL.appendingPathComponent(Self.manifestPath, isDirectory: false)
     }
 
     public func manifest() throws -> TryOmarchyKitManifest {

@@ -100,7 +100,7 @@ kit.write_text("test kit\\n")
 digest = os.environ.get("WRONG_KIT_DIGEST") or __import__("hashlib").sha256(kit.read_bytes()).hexdigest()
 (kit.parent / "TryOmarchyKit.zip.sha256").write_text(f"{digest}  TryOmarchyKit.zip\\n")
 tag = plistlib.loads(plist.read_bytes())["TryOmarchyBuildDescribe"]
-kit_resources = kit.parent / "Try Omarchy Kit.app/Contents/Resources"
+kit_resources = kit.parent / "TryOmarchyKit.bundle/Contents/Resources"
 kit_resources.mkdir(parents=True, exist_ok=True)
 kit_json = json.dumps({"format": 1, "version": os.environ.get("WRONG_KIT_VERSION", tag),
                        "runProtocolVersion": 1, "buildDate": "2026-10-23T12:00:00Z"})

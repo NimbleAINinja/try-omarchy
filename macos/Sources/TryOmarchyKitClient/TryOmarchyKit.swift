@@ -4,10 +4,17 @@ import Foundation
 
 /// The kit an app embeds to run the VM: the helper, the QEMU runtime, the
 /// firmware, the launch scripts, the try-omarchy package and the image's
-/// download manifest, as a bundle without the full app's launcher.
+/// download manifest. It is a helper bundle with no identity of its own: its
+/// Info.plist has no bundle identifier or name, so the helper runs as the app
+/// that starts it.
 public struct TryOmarchyKit: Sendable {
-    public static let bundleName = "Try Omarchy Kit.app"
+    /// The kit's folder, at the top of `TryOmarchyKit.zip` and in an app's
+    /// `Contents/Helpers`.
+    public static let bundleName = "TryOmarchyKit.bundle"
     public static let helperName = "omarchy-vm-helper"
+    /// Where the helper and the manifest are inside the kit's folder.
+    public static let helperPath = "Contents/MacOS/\(helperName)"
+    public static let manifestPath = "Contents/Resources/\(TryOmarchyKitManifest.fileName)"
 
     public let bundleURL: URL
 
@@ -15,15 +22,18 @@ public struct TryOmarchyKit: Sendable {
         self.bundleURL = bundleURL
     }
 
+    /// The kit in a folder that holds `TryOmarchyKit.zip` unpacked.
+    public static func unpacked(in folder: URL) -> Self {
+        Self(bundleURL: folder.appendingPathComponent(bundleName, isDirectory: true))
+    }
+
     /// The kit in an app's `Contents/Helpers`.
     public static func embedded(in bundle: Bundle = .main) -> Self {
-        Self(bundleURL: bundle.bundleURL
-            .appendingPathComponent("Contents/Helpers", isDirectory: true)
-            .appendingPathComponent(bundleName, isDirectory: true))
+        unpacked(in: bundle.bundleURL.appendingPathComponent("Contents/Helpers", isDirectory: true))
     }
 
     public func helperURL() throws -> URL {
-        let helper = bundleURL.appendingPathComponent("Contents/MacOS/\(Self.helperName)", isDirectory: false)
+        let helper = bundleURL.appendingPathComponent(Self.helperPath, isDirectory: false)
         var information = stat()
         guard lstat(bundleURL.path, &information) == 0, information.st_mode & S_IFMT == S_IFDIR,
               lstat(helper.path, &information) == 0, information.st_mode & S_IFMT == S_IFREG,

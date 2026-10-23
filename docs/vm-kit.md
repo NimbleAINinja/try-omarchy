@@ -2,7 +2,7 @@
 
 Another app can run the Omarchy VM without Try Omarchy's launcher window. Omarchy Installer does this for its Try mode ([one app plan](one-app.md)). It embeds three things from this repository's releases:
 
-- **the kit:** `Try Omarchy Kit.app`, the full app without its bridged-networking daemon;
+- **the kit:** `TryOmarchyKit.bundle`, the full app's helper and resources without its bridged-networking daemon, as a helper bundle with no identity of its own;
 - **the run mode:** `omarchy-vm-helper --run-vm`, the kit's helper with no window;
 - **the client:** `TryOmarchyKitClient`, a Swift library that starts the run mode and follows it.
 
@@ -16,9 +16,29 @@ The full app and the run mode run the VM through the same session (`VMRunSession
 
 The kit carries the helper, the QEMU runtime, the firmware, the launch scripts, the `try-omarchy` package and the image's download manifest. It does not carry the image: its first start downloads the parts from the release the kit came from. Releases are never deleted, because installers pinned to an old kit need its parts.
 
-CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature, `kit.json`, that no bridged-networking daemon is inside, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
+CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature, that the kit has no identity, `kit.json`, that no bridged-networking daemon is inside, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
 
-The embedding app signs the kit's binaries as itself. macOS then asks for Accessibility, Microphone and Camera in that app's name.
+### Layout
+
+`TryOmarchyKit.zip` holds one folder, `TryOmarchyKit.bundle`. An app unpacks it and finds, inside that folder:
+
+- the helper at `Contents/MacOS/omarchy-vm-helper`;
+- the manifest at `Contents/Resources/kit.json`;
+- the runtime, firmware, scripts and guest files beside the manifest, in `Contents/Resources`.
+
+An embedding app keeps its kit in `Contents/Helpers/TryOmarchyKit.bundle`, and a kit it fetches in a folder of its own. The client follows the same paths: `TryOmarchyKit.embedded(in:)` for the kit in an app, `TryOmarchyKit.unpacked(in:)` for a folder that holds the unpacked zip, and `helperURL()` and `manifestURL` within either.
+
+### No identity
+
+The kit is a bundle, not an app. Its `Info.plist` names its executable, says it is a bundle, keeps it out of the Dock and asks for sharp text. It has no bundle identifier and no name. macOS files preferences, permission grants and Launch Services records under an app's identifier, so the kit never appears as an app of its own: not in the Dock, not in System Settings, not as an app Launch Services knows.
+
+It stays a bundle, rather than loose files, for three reasons:
+
+- the helper finds its resources through its bundle, as it does in the full app;
+- the signature seals the bundle's scripts, firmware and guest files, so the launcher checks the whole kit before each start (`codesign --verify --deep --strict`);
+- an app's signature treats a folder in `Contents/Helpers` as one nested piece of code only when it is a bundle with an extension; otherwise it expects every file there to be code.
+
+The kit is signed as `dev.tryomarchy.kit`, a code-signing identifier, not a bundle identifier. The embedding app signs every Mach-O in it and the bundle as itself. macOS attributes a helper's permission requests to the app that started it, so it asks for Accessibility, Microphone and Camera in that app's name, with that app's usage descriptions, as long as the app starts the helper as its child. The few values the helper keeps in UserDefaults, such as the last notch measurement, go to the domain macOS names after its file, `omarchy-vm-helper`.
 
 ## The kit's version
 
@@ -48,7 +68,7 @@ The app starts `omarchy-vm-helper --run-vm` from the kit, writes one configurati
 
 The configuration names the product, its icon (an `.icns` or `.png` file; the kit's own icon when absent) and the optional bridges. Its storage folder, memory, CPUs and network are fallbacks for a VM with no stored settings ([settings](#settings)). Audio, guest status and the settings bridge always run.
 
-The Omarchy window, its Dock entry and its application menu carry the product's name and icon. The Dock names a process that has no app bundle after its file, even when it starts through a link. So the launcher starts QEMU from a minimal app bundle named after the product, in the run's private folder, whose executable links to the signed binary. The binary stays in place, so its signature and the bridges' check of the QEMU process are unchanged. A name that cannot be a file name, with a `/` or longer than 251 bytes, keeps the binary's name in the Dock.
+The Omarchy window, its Dock entry and its application menu carry the product's name and icon. The Dock names a process that has no app bundle after its file, even when it starts through a link. So the launcher starts QEMU from a minimal app bundle named after the product, in the run's private folder, whose executable links to the signed binary. That bundle has no identifier either, so Launch Services never records a second app, and the run's permissions stay with the app that started it. The binary stays in place, so its signature and the bridges' check of the QEMU process, which reads the path of the running file, are unchanged. A name that cannot be a file name, with a `/` or longer than 251 bytes, keeps the binary's name in the Dock.
 
 The run mode writes `progress` (a phase and a percent), `ready`, `stopping`, `error` (a stable code and a message) and, last, `exited`. Error codes do not change between versions; messages may.
 

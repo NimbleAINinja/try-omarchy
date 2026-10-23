@@ -67,7 +67,7 @@ The trial's **Open in Try Omarchy** handoff goes away: the one app always runs t
 
 Everything in Try runs as the installer. The kit's binaries carry the installer's bundle identifier and name, are signed with the installer's identity and notarized with the installer, and macOS asks for Accessibility, Microphone and Camera in the installer's name and records the grants against it. The QEMU window's Dock name, icon and menus are the installer's too.
 
-Today the kit is a nested app bundle with its own identifier, `dev.tryomarchy.kit`, and the installer only re-signs its code. The kit becomes a set of helpers inside the installer's bundle instead, with no identity of its own, so the installer's build signs and notarizes it like its other helpers. A bundle identifier is what macOS files preferences, permission grants and Launch Services registration under, which is why the kit must not keep one.
+The kit is a helper bundle inside the installer's `Contents/Helpers`, with no bundle identifier or name of its own, so the installer's build signs and notarizes it like its other helpers ([no identity](vm-kit.md#no-identity)). A bundle identifier is what macOS files preferences, permission grants and Launch Services registration under, which is why the kit has none. It stays a bundle so its signature seals its scripts and resources.
 
 A kit the installer fetches cannot be signed as the installer. It is signed and notarized by this repository's release identity, and the installer accepts a kit whose signature chains to either team, this repository's or its own, with the hardened runtime and the kit's identifier. One team for both is the end state, and then the list shrinks to one. The grants still belong to the installer, because macOS attributes a helper's permissions to the app that started it, whoever signed the helper. The installer's Info.plist carries the usage descriptions for the camera and microphone.
 
@@ -108,7 +108,7 @@ Next, in this repository:
 
 1. Done: the settings bridge and the launcher window in the run mode, named after the product.
 2. Done: settings stored in the VM's folder, and the run mode reading them.
-3. The kit as helpers without a bundle identity. Done: the product name, icon and menus in the QEMU window.
+3. Done: the kit as a helper bundle without a bundle identity, and the product name, icon and menus in the QEMU window.
 4. The kit signed and notarized by its release. Done: a version the installer can compare, in the kit's manifest.
 5. The daemon registration for bridged networking under another identity.
 6. When the one app ships with settings: stop publishing the DMG, and move the manual.
@@ -119,7 +119,7 @@ Next, in the installer:
 2. Done: the remembered choice: a VM in the default folder opens Try and starts Omarchy, with the inspection in the background.
 3. Done: **Install on this Mac…** and **Delete Virtual Machine…** in the Installation menu, and the Allow rows on the running page.
 4. Done: the **Open in Try Omarchy** handoff is gone, and `vm-already-open` names Try Omarchy.
-5. The kit built into the installer's bundle under its identity.
+5. Done: the kit built into the installer's bundle under its identity.
 6. Fetching, verifying and switching to newer kits.
 
 ## Testing

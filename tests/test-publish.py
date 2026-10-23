@@ -88,8 +88,8 @@ class PublishTests(unittest.TestCase):
         (dist / "kit.noindex/TryOmarchyKit.zip.sha256").write_text(f"{digest}  TryOmarchyKit.zip\n")
         manifest = json.dumps({"format": 1, "version": tag, "runProtocolVersion": 1,
                                "buildDate": "2026-10-23T12:00:00Z"})
-        (dist / "kit.noindex/Try Omarchy Kit.app/Contents/Resources").mkdir(parents=True, exist_ok=True)
-        (dist / "kit.noindex/Try Omarchy Kit.app/Contents/Resources/kit.json").write_text(manifest)
+        (dist / "kit.noindex/TryOmarchyKit.bundle/Contents/Resources").mkdir(parents=True, exist_ok=True)
+        (dist / "kit.noindex/TryOmarchyKit.bundle/Contents/Resources/kit.json").write_text(manifest)
         (dist / "kit.noindex/TryOmarchyKit.json").write_text(manifest)
 
     def set_releases(self, releases: list[dict]) -> None:

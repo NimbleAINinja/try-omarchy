@@ -28,12 +28,13 @@ struct TryOmarchyKitManifestTests {
     }
 
     @Test func kitReadsTheManifestBuildKitWrites() throws {
-        let kitURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("kit-manifest-\(UUID().uuidString)/Try Omarchy Kit.app", isDirectory: true)
-        let resources = kitURL.appendingPathComponent("Contents/Resources", isDirectory: true)
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kit-manifest-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let kit = TryOmarchyKit.unpacked(in: folder)
+        #expect(kit.manifestURL.path == folder.path + "/TryOmarchyKit.bundle/Contents/Resources/kit.json")
+        let resources = kit.manifestURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: kitURL.deletingLastPathComponent()) }
-        let kit = TryOmarchyKit(bundleURL: kitURL)
 
         #expect(throws: TryOmarchyKitManifestError.missing) { try kit.manifest() }
         let written = """

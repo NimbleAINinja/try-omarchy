@@ -1,14 +1,15 @@
 #!/bin/bash
 #
-# Derives the kit from a built app: the bundle another app embeds to run the
-# VM through the helper's run mode (docs/installer-trial.md). It is the app
-# without its bridged-networking daemon, and it downloads its factory.
+# Derives the kit from a built app: the helper bundle another app embeds to
+# run the VM through the helper's run mode (docs/vm-kit.md). It is the app
+# without its bridged-networking daemon and without a bundle identity, and it
+# downloads its factory.
 #
 #   macos/build-kit.sh --app APP --output DIR [--sign-identity IDENTITY]
 #
-# Writes DIR/Try Omarchy Kit.app, DIR/TryOmarchyKit.zip, its digest
+# Writes DIR/TryOmarchyKit.bundle, DIR/TryOmarchyKit.zip, its digest
 # DIR/TryOmarchyKit.zip.sha256, and DIR/TryOmarchyKit.json, a copy of the
-# kit's manifest (docs/vm-kit.md). The embedding app signs the kit as itself.
+# kit's manifest. The embedding app signs the kit as itself.
 
 set -euo pipefail
 
@@ -40,7 +41,7 @@ app=$(cd "$app" && pwd -P)
 mkdir -p "$output"
 output=$(cd "$output" && pwd -P)
 
-kit_name='Try Omarchy Kit.app'
+kit_name=TryOmarchyKit.bundle
 kit="$output/$kit_name"
 archive="$output/TryOmarchyKit.zip"
 contents="$kit/Contents"
@@ -57,16 +58,19 @@ rm -rf "$contents/_CodeSignature" "$contents/Library" "$contents/Resources/netwo
 compressed=$(/usr/bin/plutil -extract compressed.path raw -o - "$guest/factory.json")
 [[ ! -e $guest/$compressed ]] || fail "the app carries its factory image; a kit downloads it"
 
+# No identifier or name: macOS files preferences, permissions and Launch
+# Services records under those, and the kit runs as the app that starts it.
 python3 - "$contents/Info.plist" <<'PYTHON'
 import plistlib, sys
 from pathlib import Path
 path = Path(sys.argv[1])
-value = plistlib.loads(path.read_bytes())
-value["CFBundleIdentifier"] = "dev.tryomarchy.kit"
-value["CFBundleName"] = value["CFBundleDisplayName"] = "Try Omarchy Kit"
-value["LSUIElement"] = True
-value["TryOmarchyKitFormat"] = 1
-path.write_bytes(plistlib.dumps(value))
+app = plistlib.loads(path.read_bytes())
+path.write_bytes(plistlib.dumps({
+    "CFBundleExecutable": app["CFBundleExecutable"],
+    "CFBundlePackageType": "BNDL",
+    "LSUIElement": True,
+    "NSHighResolutionCapable": True,
+}))
 PYTHON
 python3 "$repo_dir/scripts/kit_manifest.py" --root "$repo_dir" --app "$app" --output "$contents/Resources/kit.json"
 

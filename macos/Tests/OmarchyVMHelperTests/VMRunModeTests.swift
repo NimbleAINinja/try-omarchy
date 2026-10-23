@@ -316,7 +316,7 @@ struct VMRunClientTests {
     }
 
     @Test func refusesAMissingKit() {
-        let client = VMRunClient(kit: TryOmarchyKit(bundleURL: URL(fileURLWithPath: "/nonexistent/Try Omarchy Kit.app")))
+        let client = VMRunClient(kit: TryOmarchyKit(bundleURL: URL(fileURLWithPath: "/nonexistent/TryOmarchyKit.bundle")))
         #expect(throws: VMRunError.self) {
             try client.start(VMRunConfiguration(productName: "Omarchy Installer")) { _ in }
         }

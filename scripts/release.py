@@ -132,7 +132,7 @@ def verify_release_artifacts(root: Path, tag: str) -> None:
     # Installers compare kits by this version before and after downloading one.
     try:
         published = kit_manifest.read(kit.parent / "TryOmarchyKit.json")
-        bundled = kit_manifest.read(kit.parent / "Try Omarchy Kit.app/Contents/Resources/kit.json")
+        bundled = kit_manifest.read(kit.parent / "TryOmarchyKit.bundle/Contents/Resources/kit.json")
     except (OSError, ValueError) as error:
         raise ValueError(f"the kit has no valid manifest: {error}") from error
     if published != bundled or published["version"] != tag:

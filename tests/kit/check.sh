@@ -1,9 +1,10 @@
 #!/bin/bash
 #
 # Checks a built kit the way an embedding app receives it (docs/vm-kit.md):
-# the archive and its digest, the bundle and its signature, the manifest, the
-# guest resources, no bridged-networking daemon, the launcher's self-check,
-# and the run mode's refusals from the kit's own helper. Starts no VM.
+# the archive and its digest, the bundle and its signature, no bundle
+# identity, the manifest, the guest resources, no bridged-networking daemon,
+# the launcher's self-check, and the run mode's refusals from the kit's own
+# helper. Starts no VM.
 #
 #   tests/kit/check.sh [KIT_DIR]    (default: dist/kit.noindex, from make kit)
 
@@ -17,7 +18,8 @@ fail() {
 }
 [[ -d $output ]] || fail "no kit in $output; run make kit"
 output=$(cd "$output" && pwd -P)
-kit="$output/Try Omarchy Kit.app"
+kit_name=TryOmarchyKit.bundle
+kit="$output/$kit_name"
 contents="$kit/Contents"
 resources="$contents/Resources"
 archive="$output/TryOmarchyKit.zip"
@@ -32,15 +34,19 @@ done
 (cd "$output" && /usr/bin/shasum -a 256 -c TryOmarchyKit.zip.sha256 >/dev/null) || fail "TryOmarchyKit.zip does not match its .sha256"
 [[ $(wc -l <"$archive.sha256") -eq 1 ]] || fail "TryOmarchyKit.zip.sha256 must name one file"
 ditto -x -k "$archive" "$scratch/unpacked"
-[[ -d "$scratch/unpacked/Try Omarchy Kit.app" ]] || fail "the archive does not hold Try Omarchy Kit.app at its top"
-diff -rq "$kit" "$scratch/unpacked/Try Omarchy Kit.app" >/dev/null || fail "the archive's kit differs from the built kit"
-codesign --verify --deep --strict "$scratch/unpacked/Try Omarchy Kit.app" || fail "the archive's kit has an invalid signature"
+[[ $(ls "$scratch/unpacked") == "$kit_name" && -d $scratch/unpacked/$kit_name ]] ||
+  fail "the archive does not hold only $kit_name at its top"
+diff -rq "$kit" "$scratch/unpacked/$kit_name" >/dev/null || fail "the archive's kit differs from the built kit"
+codesign --verify --deep --strict "$scratch/unpacked/$kit_name" || fail "the archive's kit has an invalid signature"
 codesign --verify --deep --strict "$kit" || fail "the kit has an invalid signature"
 
-info() { /usr/bin/plutil -extract "$1" raw -o - "$contents/Info.plist" 2>/dev/null; }
-[[ $(info CFBundleIdentifier) == dev.tryomarchy.kit ]] || fail "the kit's bundle identifier is not dev.tryomarchy.kit"
-[[ $(info CFBundleExecutable) == omarchy-vm-helper ]] || fail "the kit's executable is not the helper"
-[[ $(info LSUIElement) == true && $(info TryOmarchyKitFormat) == 1 ]] || fail "the kit's Info.plist is not a kit's"
+# The kit has no identity of its own: it runs as the app that embeds it.
+python3 -I -c 'import plistlib, sys; assert plistlib.load(open(sys.argv[1], "rb")) == {
+    "CFBundleExecutable": "omarchy-vm-helper", "CFBundlePackageType": "BNDL",
+    "LSUIElement": True, "NSHighResolutionCapable": True}' "$contents/Info.plist" ||
+  fail "the kit's Info.plist has more than its executable and presentation"
+[[ $(codesign -d "$kit" 2>&1 | sed -n 's/^Identifier=//p') == dev.tryomarchy.kit ]] ||
+  fail "the kit is not signed as dev.tryomarchy.kit"
 
 python3 "$root/scripts/kit_manifest.py" --root "$root" --check "$resources/kit.json" >/dev/null || fail "kit.json is invalid"
 cmp -s "$resources/kit.json" "$output/TryOmarchyKit.json" || fail "TryOmarchyKit.json differs from the kit's kit.json"
