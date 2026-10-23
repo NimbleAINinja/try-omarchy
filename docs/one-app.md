@@ -33,7 +33,7 @@ The Try page is the trial's Try screen as built: Accessibility, so Command works
 
 ## Try
 
-Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. While Omarchy runs, the page shows its state, **Shut Down** and, on a supported Mac, **Migrate to Native** ([install from Try](#install-from-try)). The page also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
+Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. Once Omarchy's window is up, the installer's window closes, as the launcher's does, and the app stays open with its menus, which have **Shut Down** and **Migrate to Native**. The window comes back when Omarchy shuts down or fails, and the Dock icon or the Window menu brings it back while Omarchy runs. It then shows Omarchy's state, **Shut Down** and, on a supported Mac, **Migrate to Native** ([install from Try](#install-from-try)). It also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
 
 A VM is the remembered choice, in the default folder or in the folder chosen in Try Omarchy ([finding the VM](vm-kit.md#finding-the-vm)). Every later launch:
 
