@@ -38,6 +38,12 @@ printf x >>"$output/Contents/Resources/network/socket_vmnet"
 refuses 'a changed server'
 cp "$output/server.built" "$output/Contents/Resources/network/socket_vmnet"
 "$daemon" check >/dev/null
+mv "$output/Contents/Resources" "$output/resources.moved"
+if "$daemon" check 2>"$output/check.err" || ! grep -q 'network runtime is not at' "$output/check.err"; then
+  echo 'network-helper.test: the daemon did not say its network runtime is missing' >&2
+  exit 1
+fi
+mv "$output/resources.moved" "$output/Contents/Resources"
 "$output/stream-test"
 /usr/bin/clang -Wall -Wextra -Werror -mmacosx-version-min=15.0 -DVERSION='"test"' \
   -framework vmnet "$root/recovery.test.c" "$root/vendor/cli.c" -o "$output/recovery-test"

@@ -164,8 +164,12 @@ static int check(void) {
     return 0;
 }
 int main(int argc, char **argv) {
-    if(!locate())return 1;
-    if(argc==2 && !strcmp(argv[1],"check"))return check();
+    bool checking=argc==2 && !strcmp(argv[1],"check");
+    if(!locate()) {
+        if(checking)fprintf(stderr,"omarchy-network-daemon: The network runtime is not at %s beside the daemon.\n",NETWORK_RESOURCES);
+        return 1;
+    }
+    if(checking)return check();
     if(argc!=1 || geteuid()!=0)return 1;
     signal(SIGTERM,SIG_IGN);
     termination=dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,SIGTERM,0,dispatch_get_main_queue());
