@@ -37,7 +37,7 @@ Starting downloads the image once, unpacks it, and boots Omarchy in its own wind
 
 A VM in the default folder is the remembered choice. The one app always boots the default folder ([finding the VM](vm-kit.md#finding-the-vm)). Every later launch:
 
-- opens on the Try page, with **Allow** and **Start**, and starts nothing until the person presses Start;
+- opens on the Try page, with **Allow** and **Launch**, and starts nothing until the person presses Launch;
 - leads back to the landing page, with **Migrate to Native** and **Try it in a VM**, through **Back**;
 - still inspects the Mac in the background, so Migrate to Native knows whether this Mac is supported;
 - offers **Migrate to Native…** in the Installation menu, beside **Remove Omarchy…**.
