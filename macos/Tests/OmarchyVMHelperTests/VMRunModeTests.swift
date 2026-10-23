@@ -205,6 +205,8 @@ struct VMRunFailureTests {
             == .hypervisorUnavailable)
         #expect(VMRunFailure.error(standardError: "run-qemu-gpu: this VM is already open\n", status: 1, reachedStart: true).code
             == .qemuExited)
+        #expect(VMRunFailure.error(standardError: "run-qemu-gpu: this VM is already open\n", status: 1, reachedStart: false)
+            .message == "Omarchy is already open in another app, such as Try Omarchy. Shut it down there, then start it again here.")
     }
 
     @Test func downloadFailuresMapToStableCodes() {

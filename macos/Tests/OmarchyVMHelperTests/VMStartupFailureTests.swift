@@ -35,4 +35,16 @@ struct VMStartupFailureTests {
         #expect(VMStartupFailure.message(status: 1, standardError: String(repeating: "x", count: 5_000)).count < 2_000)
         #expect(!VMStartupFailure.message(status: 1, standardError: "error\u{0}").contains("\u{0}"))
     }
+
+    @Test("A VM another app holds names the other app instead of an exit status")
+    func vmAlreadyOpen() {
+        let message = VMStartupFailure.message(
+            status: 1,
+            standardError: "[qemu-gpu] checking the VM folder\nrun-qemu-gpu: this VM is already open\n"
+        )
+        #expect(message == "Omarchy is already open in another app, such as Omarchy Installer. Shut it down there, then start it again here.")
+        #expect(!message.contains("exit status"))
+        #expect(VMStartupFailure.message(status: 1, standardError: "run-qemu-gpu: this VM is already open elsewhere\n")
+            .contains("exit status 1"))
+    }
 }

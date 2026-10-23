@@ -381,7 +381,7 @@ enum VMRunFailure {
         let explanation = standardError.components(separatedBy: .newlines)
             .last { $0.hasPrefix("run-qemu-gpu: ") }
             .map { String($0.dropFirst("run-qemu-gpu: ".count)) }
-        let message = VMStartupFailure.message(status: status, standardError: standardError)
+        let message = VMStartupFailure.message(status: status, standardError: standardError, otherApp: "Try Omarchy")
         guard !reachedStart, let explanation else {
             if standardError.contains("HV_") || standardError.localizedCaseInsensitiveContains("hvf") {
                 return VMRunError(code: .hypervisorUnavailable, message: message)
