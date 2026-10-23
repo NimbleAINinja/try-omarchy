@@ -1,4 +1,5 @@
 #include <CommonCrypto/CommonDigest.h>
+#include <Security/Security.h>
 #include <SystemConfiguration/SystemConfiguration.h>
 #include <dispatch/dispatch.h>
 #include <errno.h>
@@ -15,16 +16,17 @@
 #include <unistd.h>
 #include <xpc/xpc.h>
 #include "network-build.h"
+#include "payload-check.h"
 
 static pid_t session_pid = -1;
 static char resources[PATH_MAX];
+static char helper[PATH_MAX];
 static dispatch_source_t termination;
 static bool valid_app(pid_t pid, uid_t uid) {
     struct proc_bsdinfo info;
     if (pid <= 1 || proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != sizeof(info) || info.pbi_uid != uid) return false;
-    char actual[PROC_PIDPATHINFO_MAXSIZE], expected[PATH_MAX], canonical[PATH_MAX];
-    if (snprintf(expected,sizeof(expected),"%s/../MacOS/omarchy-vm-helper",resources)>=(int)sizeof(expected) ||
-        !realpath(expected,canonical) || proc_pidpath(pid,actual,sizeof(actual))<=0) return false;
+    char actual[PROC_PIDPATHINFO_MAXSIZE], canonical[PATH_MAX];
+    if (!realpath(helper,canonical) || proc_pidpath(pid,actual,sizeof(actual))<=0) return false;
     char actual_canonical[PATH_MAX];
     return realpath(actual,actual_canonical) && !strcmp(canonical,actual_canonical);
 }
@@ -129,14 +131,42 @@ static const char *start(xpc_connection_t peer, xpc_object_t request, char stage
     if(directory>=0)close(directory);
     return error?"The bundled network runtime failed verification or could not start.":NULL;
 }
-int main(void) {
-    if(geteuid()!=0)return 1;
-    char executable[PATH_MAX];uint32_t size=sizeof(executable);
-    if(_NSGetExecutablePath(executable,&size))return 1;
-    char *slash=strrchr(executable,'/');if(!slash)return 1;*slash=0;
-    // Daemon is in Contents/MacOS; payloads remain in this app's Resources.
-    slash=strrchr(executable,'/');if(!slash)return 1;*slash=0;
-    if(snprintf(resources,sizeof(resources),"%s/Resources",executable)>=(int)sizeof(resources))return 1;
+static bool locate(void) {
+    char executable[PATH_MAX], location[PATH_MAX];uint32_t size=sizeof(executable);
+    if(_NSGetExecutablePath(executable,&size))return false;
+    char *slash=strrchr(executable,'/');if(!slash)return false;*slash=0;
+    return snprintf(helper,sizeof(helper),"%s/omarchy-vm-helper",executable)<(int)sizeof(helper) &&
+        snprintf(location,sizeof(location),"%s/%s",executable,NETWORK_RESOURCES)<(int)sizeof(location) &&
+        realpath(location,resources);
+}
+static bool client_matches(void) {
+    char client[PATH_MAX];
+    if(snprintf(client,sizeof(client),"%s/network/omarchy-network-client",resources)>=(int)sizeof(client))return false;
+    CFURLRef url=CFURLCreateFromFileSystemRepresentation(NULL,(const UInt8 *)client,(CFIndex)strlen(client),false);
+    SecStaticCodeRef code=NULL;SecRequirementRef requirement=NULL;
+    bool valid=url && SecStaticCodeCreateWithPath(url,kSecCSDefaultFlags,&code)==errSecSuccess &&
+        SecRequirementCreateWithString(CFSTR(CLIENT_REQUIREMENT),kSecCSDefaultFlags,&requirement)==errSecSuccess &&
+        SecStaticCodeCheckValidity(code,kSecCSDefaultFlags,requirement)==errSecSuccess;
+    if(requirement)CFRelease(requirement);
+    if(code)CFRelease(code);
+    if(url)CFRelease(url);
+    return valid;
+}
+static int check(void) {
+    const char *problem=NULL;
+    if(access(helper,X_OK))problem="The helper is not beside the daemon.";
+    else if(!matches_payload(resources,"socket_vmnet",SERVER_SHA256) ||
+            !matches_payload(resources,"omarchy-network-supervisor",SUPERVISOR_SHA256))
+        problem="The network server or supervisor differs from the one this daemon was built with.";
+    else if(!client_matches())problem="The network client does not satisfy the daemon's requirement: " CLIENT_REQUIREMENT;
+    if(problem){fprintf(stderr,"omarchy-network-daemon: %s\n",problem);return 1;}
+    printf("%s\n",NETWORK_SERVICE_NAME);
+    return 0;
+}
+int main(int argc, char **argv) {
+    if(!locate())return 1;
+    if(argc==2 && !strcmp(argv[1],"check"))return check();
+    if(argc!=1 || geteuid()!=0)return 1;
     signal(SIGTERM,SIG_IGN);
     termination=dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,SIGTERM,0,dispatch_get_main_queue());
     dispatch_source_set_event_handler(termination, ^{
