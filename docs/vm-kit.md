@@ -2,7 +2,7 @@
 
 Another app can run the Omarchy VM without Try Omarchy's launcher window. Omarchy Installer does this for its Try mode ([one app plan](one-app.md)). It embeds three things from this repository's releases:
 
-- **the kit:** `Try Omarchy Kit.app`, the full app without its bridged-networking daemon;
+- **the kit:** `Try Omarchy Kit.app`, the full app with its own bridged-networking daemon, which the embedding app registers;
 - **the run mode:** `omarchy-vm-helper --run-vm`, the kit's helper with no window;
 - **the client:** `TryOmarchyKitClient`, a Swift library that starts the run mode and follows it.
 
@@ -16,7 +16,7 @@ The full app and the run mode run the VM through the same session (`VMRunSession
 
 The kit carries the helper, the QEMU runtime, the firmware, the launch scripts, the `try-omarchy` package and the image's download manifest. It does not carry the image: its first start downloads the parts from the release the kit came from. Releases are never deleted, because installers pinned to an old kit need its parts.
 
-CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature, `kit.json`, that no bridged-networking daemon is inside, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
+CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature, `kit.json`, the bridged-networking runtime and its pins, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
 
 The embedding app signs the kit's binaries as itself. macOS then asks for Accessibility, Microphone and Camera in that app's name.
 
@@ -50,7 +50,7 @@ The configuration names the product, its icon (an `.icns` or `.png` file; the ki
 
 The Omarchy window, its Dock entry and its application menu carry the product's name and icon. The Dock names a process that has no app bundle after its file, even when it starts through a link. So the launcher starts QEMU from a minimal app bundle named after the product, in the run's private folder, whose executable links to the signed binary. The binary stays in place, so its signature and the bridges' check of the QEMU process are unchanged. A name that cannot be a file name, with a `/` or longer than 251 bytes, keeps the binary's name in the Dock.
 
-The run mode writes `progress` (a phase and a percent), `ready`, `stopping`, `error` (a stable code and a message) and, last, `exited`. Error codes do not change between versions; messages may.
+The run mode writes `progress` (a phase and a percent), `notice` (a stable code and a message, while Omarchy starts anyway), `ready`, `stopping`, `error` (a stable code and a message) and, last, `exited`. Codes do not change between versions; messages may. A reader skips an event, or a notice code, it does not know, so a newer kit can add them. Clients from before `notice` treat it as a protocol error; none was released.
 
 `make test` starts the run mode as a real process (`macos/Tests/run-mode.test.sh`), with a kit whose launcher serves QMP but runs no VM and a factory served on the loopback interface. `OMARCHY_VM_RUN_TEST_SKIP_PREFLIGHT=1` lets it run on CI runners without a hypervisor; `VMRunClient` never passes it on.
 
@@ -64,7 +64,7 @@ The run mode starts the VM with the settings the launcher window stored, and use
 
 - **the VM folder:** the folder chosen in the launcher, then the configuration's `storageRoot`, then the default folder. A chosen folder that is missing, or a choice that cannot be read, stops the run with `storage-unavailable`; it never falls back to another VM.
 - **memory and CPUs** (and the disk's maximum size): the stored resources, then the configuration's `memoryMiB` and `cpus`, then the launcher's automatic choice.
-- **networking:** the stored mode, then the configuration's `network`. A configuration that asks for bridged networking in a kit without the networking daemon fails with `bridged-network-unavailable`, as before; a stored bridged choice starts with shared networking instead, so Try is never stuck.
+- **networking:** the stored mode, then the configuration's `network`. When bridged networking cannot start ([bridged networking](#bridged-networking)), a configuration that asks for it fails with `bridged-network-unavailable`, and a stored bridged choice starts with shared networking and a notice instead, so Try is never stuck.
 - **port forwarding, the shared folder, the USB device, Immersive Mode and the camera notch:** stored only. A port that is in use fails with `launch-failed`.
 
 Audio follows the Mac's default devices. The development overrides (`OMARCHY_QEMU_GPU_STATE_ROOT`, `OMARCHY_QEMU_GPU_PORT_FORWARDS` and the like) still win, and `VMRunClient` never passes them on.
@@ -79,6 +79,36 @@ Settings are stored in files, not in an app's preferences, so any kit reads the 
 Both are private (0600) from their first byte and versioned, and saves lock the folder, so the full app and the run mode never lose each other's changes. A file that is not private, is too large or comes from a newer schema is ignored and never overwritten; for `storage-location.json` that stops the launch instead of using the default folder. A file is a JSON object with `schemaVersion` and `settings`. A save keeps every key it does not know, at the top level and in `settings`, so keys a newer kit adds survive an older kit's save. A setting that was reset is stored as `null`.
 
 Older versions of the full app kept these settings in its UserDefaults (`dev.tryomarchy.native`). Each value moves into the file the first time the file lacks it, whichever app writes the file first. The run mode reads those UserDefaults without changing them, and the full app removes each value once the file has it. A VM folder set by `OMARCHY_QEMU_GPU_STATE_ROOT` never takes them.
+
+## Bridged networking
+
+Bridged networking needs a launch daemon that runs as root. Only the app whose bundle holds the daemon's job can register it with Service Management, and macOS lists it under that app's name in Login Items. So the kit carries its daemon, and the embedding app registers it as itself. The run mode never registers anything.
+
+The kit's networking runtime:
+
+- `Contents/MacOS/omarchy-network-daemon`, beside the helper;
+- the server (`socket_vmnet`), the supervisor and the client, in `Contents/Resources/network`;
+- the daemon's job, `Contents/Resources/network/launchd.plist`, whose label and Mach service are `dev.tryomarchy.kit.network` and whose `BundleProgram` names the daemon relative to the kit.
+
+The service is the kit's own, so it never collides with the full app's `dev.tryomarchy.network`, and both can be set up on one Mac.
+
+The daemon trusts bytes, not teams. It is built after the client and the payloads are signed, and pins the client's code-signing hash and the payloads' SHA-256. It accepts XPC connections only from that client, starts sessions only for the helper beside it, and runs only the payloads it pinned. The client accepts only a daemon running as root in the system domain. Neither checks a team or a bundle identifier, so the daemon works under any app's identity, as long as nobody re-signs the client, the server or the supervisor. `omarchy-network-daemon check`, run without privileges, checks the runtime beside it and prints the service name, or says what differs and exits 1.
+
+When a start asks for bridged networking, the kit's run mode asks the daemon, through the client, whether it serves this copy of the kit. The answer comes at once when the daemon is not registered, not approved or serves another copy. Then:
+
+- a stored bridged choice starts with shared networking: the run mode writes a `notice` with the code `bridged-network-unavailable` before any progress, and the client's answer to standard error;
+- a configuration that asks for bridged networking fails with `bridged-network-unavailable`.
+
+In the settings window, the network section shows what the start found, without Set Up or Remove, because the embedding app owns the registration. The full app, and the run mode started from the full app, register and repair their own daemon as before.
+
+### What the embedding app does
+
+1. It copies the kit's job to its own `Contents/Library/LaunchDaemons/dev.tryomarchy.kit.network.plist`, named after the job's `Label`, and sets `BundleProgram` to the daemon's path inside its bundle, such as `Contents/Helpers/Try Omarchy Kit.app/Contents/MacOS/omarchy-network-daemon`.
+2. It signs the daemon as itself, with the hardened runtime, and leaves `socket_vmnet`, `omarchy-network-supervisor` and `omarchy-network-client` as the kit signed them. Its assembly test runs `omarchy-network-daemon check` in the signed app and expects `dev.tryomarchy.kit.network`.
+3. On the `bridged-network-unavailable` notice, it offers to set up bridged networking. From its own process, with `SMAppService.daemon(plistName: "dev.tryomarchy.kit.network.plist")`, it calls `register()` when the daemon is not registered, and `SMAppService.openSystemSettingsLoginItems()` while it needs approval. The next start uses it.
+4. To repair, it unregisters and registers again; to remove, it unregisters. Either interrupts a bridged session, so it shuts Omarchy down first.
+
+A fetched kit lives outside the embedding app's bundle, and the registered daemon serves only the kit beside it. So a fetched kit starts a stored bridged choice with shared networking and the notice. Bridged networking from a fetched kit needs the daemon to trust signatures it can check on a kit outside the bundle, instead of pinned bytes.
 
 ## Sharing a VM
 

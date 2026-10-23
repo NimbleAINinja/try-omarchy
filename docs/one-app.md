@@ -110,7 +110,7 @@ Next, in this repository:
 2. Done: settings stored in the VM's folder, and the run mode reading them.
 3. The kit as helpers without a bundle identity. Done: the product name, icon and menus in the QEMU window.
 4. The kit signed and notarized by its release. Done: a version the installer can compare, in the kit's manifest.
-5. The daemon registration for bridged networking under another identity.
+5. Done: the kit's own bridged-networking daemon, which the embedding app registers as itself ([bridged networking](vm-kit.md#bridged-networking)). Bridged networking from a fetched kit remains.
 6. When the one app ships with settings: stop publishing the DMG, and move the manual.
 
 Next, in the installer:
@@ -121,6 +121,7 @@ Next, in the installer:
 4. Done: the **Open in Try Omarchy** handoff is gone, and `vm-already-open` names Try Omarchy.
 5. The kit built into the installer's bundle under its identity.
 6. Fetching, verifying and switching to newer kits.
+7. Registering the kit's networking daemon as the installer, offered on the `bridged-network-unavailable` notice ([what the embedding app does](vm-kit.md#what-the-embedding-app-does)).
 
 ## Testing
 
