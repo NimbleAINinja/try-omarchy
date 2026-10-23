@@ -94,7 +94,7 @@ Outputs are written to:
 - `dist/guest/`
 
 `make package` and `make release` both create distributable builds: they sign
-the app and DMG with Developer ID, submit the DMG to Apple's notarization
+the app, the DMG and the kit with Developer ID, submit the DMG and the kit to Apple's notarization
 service, and staple the resulting tickets. Neither command falls back to an
 unnotarized build. Both commands first ensure the content-hashed guest,
 runtime and firmware artifacts are current; packaging and signing themselves always run
@@ -107,6 +107,42 @@ make release VERSION=vX.Y.Z \
   RELEASE_SIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
   RELEASE_NOTARY_PROFILE=example-profile
 ```
+
+## The kit
+
+The kit is signed and notarized with the app, by the same `make release` (or `make package`), with `RELEASE_SIGN_IDENTITY` and `RELEASE_NOTARY_PROFILE`. There is nothing else to run. `macos/build-kit.sh`, through `scripts/kit_signature.py`:
+
+1. signs every Mach-O in the kit as `dev.tryomarchy.kit`, with the hardened runtime and a secure timestamp, inside out: the libraries, then the other tools, then QEMU with the hypervisor and microphone entitlements, then the helper with the camera and microphone entitlements, then the kit's bundle;
+2. checks those signatures and the launcher's self-check, and zips the kit into `TryOmarchyKit.zip`;
+3. submits the zip with `xcrun notarytool submit --wait`, and stops unless Apple accepts it;
+4. staples the ticket to the kit's bundle, and zips the stapled kit again;
+5. records the digest of that zip in `TryOmarchyKit.zip.sha256` and copies the manifest to `TryOmarchyKit.json`.
+
+A zip cannot be stapled, so the zip that is published is the one rebuilt from the stapled kit, and its digest is of the published bytes. Apple also serves the ticket online, which a kit without a bundle relies on. The installer downloads kits without the quarantine attribute, so Gatekeeper does not assess them there.
+
+Then `make release` runs `tests/kit/check.sh` on the kit, with `KIT_TEAM_ID` set to the identity's team. It refuses the release if a Mach-O is unsigned, signed by another team or identifier, without the hardened runtime or a timestamp, or with other entitlements than its own, if Gatekeeper rejects the kit, or if QEMU does not start with its libraries.
+
+To try the kit's release signing without notarizing, sign it ad hoc from a production app and check it:
+
+```sh
+macos/build-kit.sh --app "dist/release.noindex/Try Omarchy.app" --output /tmp/kit --sign-identity -
+tests/kit/check.sh /tmp/kit
+```
+
+The check says which checks an ad hoc kit skips. With the Developer ID identity instead of `-`, the kit is signed as a release is; check it with `KIT_NOTARIZED=0`, since only a notarized kit passes Gatekeeper. Without `--notarize-profile` nothing is sent to Apple.
+
+To verify a published kit, download `TryOmarchyKit.zip`, `TryOmarchyKit.zip.sha256` and `TryOmarchyKit.json` from the release into an empty folder, then run from the repository:
+
+```sh
+kit=/tmp/published-kit
+(cd "$kit" && shasum -a 256 -c TryOmarchyKit.zip.sha256 && ditto -x -k TryOmarchyKit.zip .)
+codesign -dv --verbose=4 "$kit/Try Omarchy Kit.app/Contents/Resources/runtime/bin/Try Omarchy"
+spctl --assess --type execute -vv "$kit/Try Omarchy Kit.app"
+xcrun stapler validate "$kit/Try Omarchy Kit.app"
+tests/kit/check.sh "$kit"
+```
+
+`codesign` shows `Identifier=dev.tryomarchy.kit`, `flags=0x10000(runtime)`, `Authority=Developer ID Application: …`, a `Timestamp` and `TeamIdentifier=RZC79MPD34`. `spctl` says `source=Notarized Developer ID`. The kit check does the same for every Mach-O in the kit.
 
 ## Release checklist
 
@@ -128,7 +164,7 @@ make release VERSION=vX.Y.Z \
    bundled `try-omarchy` package when it is newer (start menu **Omarchy** row),
    and `omarchy update` still completes. Separately confirm that new, reset,
    and ephemeral VMs use the current factory.
-5. Verify the app and DMG signatures with Apple's tools and confirm notarization.
+5. Verify the app, DMG and kit signatures with Apple's tools and confirm notarization ([the kit](#the-kit)).
 6. Audit `THIRD_PARTY_NOTICES.md`, the bundle's license material, the
    factory's `packages.txt`, and QEMU and edk2 corresponding-source obligations.
 7. State in release notes that installing the app preserves existing VM

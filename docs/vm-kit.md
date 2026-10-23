@@ -12,13 +12,15 @@ The full app and the run mode run the VM through the same session (`VMRunSession
 
 ## The kit
 
-`make kit` builds a production app, ad-hoc signed, and derives the kit from it (`macos/build-kit.sh`) in `dist/kit.noindex/`. `make package` and `make release` build the kit from the signed release app. `make publish` uploads `TryOmarchyKit.zip` and `TryOmarchyKit.zip.sha256` with the DMG and the image parts.
+`make kit` builds a production app, ad-hoc signed, and derives the kit from it (`macos/build-kit.sh`) in `dist/kit.noindex/`. `make package` and `make release` build the kit from the release app, sign and notarize it ([releasing](releasing.md#the-kit)). `make publish` uploads `TryOmarchyKit.zip` and `TryOmarchyKit.zip.sha256` with the DMG and the image parts.
 
 The kit carries the helper, the QEMU runtime, the firmware, the launch scripts, the `try-omarchy` package and the image's download manifest. It does not carry the image: its first start downloads the parts from the release the kit came from. Releases are never deleted, because installers pinned to an old kit need its parts.
 
-CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature, `kit.json`, that no bridged-networking daemon is inside, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
+CI builds a kit on macOS 15 and 26 from the runtime and a stand-in for the guest, and `make test-kit` checks it: the archive and its digest, the signature of every Mach-O, QEMU starting with its libraries, `kit.json`, that no bridged-networking daemon is inside, the launcher's self-check, and the run mode of the kit's own helper. `make kit` runs the same check.
 
-The embedding app signs the kit's binaries as itself. macOS then asks for Accessibility, Microphone and Camera in that app's name.
+Every Mach-O in a kit carries the identifier `dev.tryomarchy.kit` and one signer. A release kit is signed by this repository's team, `RZC79MPD34`, with the hardened runtime and a secure timestamp, and notarized. QEMU carries the hypervisor and microphone entitlements, the helper the camera and microphone, and the rest none. A kit from `make kit` or CI is signed ad hoc, without the hardened runtime, because the hardened runtime refuses libraries that have no team.
+
+An app that embeds the kit re-signs every Mach-O in it as itself. An app that fetches a newer kit runs it as the release signed it. Either way macOS asks for Accessibility, Microphone and Camera in the app's name, because the app starts the kit.
 
 ## The kit's version
 
