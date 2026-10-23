@@ -474,6 +474,13 @@ class MenuEntries(unittest.TestCase):
         self.entries()
         self.assertEqual(self.settings_label(), "Mac Settings")
 
+    def test_the_settings_desktop_entry_names_no_app(self):
+        entry = configparser.ConfigParser(interpolation=None)
+        entry.optionxform = str
+        entry.read(FILES / "usr/share/applications/try-omarchy-settings.desktop")
+        self.assertEqual(entry["Desktop Entry"]["Name"], "VM Settings")
+        self.assertNotIn("Try Omarchy", entry["Desktop Entry"]["Comment"])
+
     def test_a_settings_row_from_an_earlier_package_follows_the_app(self):
         self.entries()
         (self.state / "menu-rows.json").unlink()

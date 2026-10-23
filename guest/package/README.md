@@ -70,6 +70,8 @@ not ignore, so caches and other local files never reach the package.
   exactly as written follow Omarchy's later changes; rows the user edits or
   removes are left alone. The settings row is named after the Mac app that
   runs the VM (`tryomarchy.product_name`), and says Try Omarchy without it.
+  Its desktop entry, which the app launcher hides, says VM Settings, because
+  a packaged file cannot follow the name of each boot.
 
 ## Host interfaces
 
