@@ -33,13 +33,13 @@ The Try page is the trial's Try screen as built: Accessibility, so Command works
 
 Starting downloads the image once, unpacks it, and boots Omarchy in its own window, as the trial does today. While Omarchy runs, the page shows its state, **Shut Down** and, on a supported Mac, **Install on this Mac**. The page also lists any permission still not granted, with **Allow**; a grant takes effect at the next start.
 
-A VM in the default folder is the remembered choice. Every later launch:
+A VM is the remembered choice, in the default folder or in the folder chosen in Try Omarchy ([finding the VM](vm-kit.md#finding-the-vm)). Every later launch:
 
 - skips the choice page and starts Omarchy at once, with the page showing its state;
 - still inspects the Mac in the background, so Install knows whether this Mac is supported;
 - offers **Install on this Mac…** in the Installation menu, beside **Remove Omarchy…**.
 
-**Delete Virtual Machine…** in the same menu removes the VM, after a confirmation that names the space it frees, and returns the one app to the first launch.
+**Delete Virtual Machine…** in the same menu removes a VM in the default folder, after a confirmation that names the space it frees, and returns the one app to the first launch. A VM in a folder chosen in Try Omarchy is Try Omarchy's to move or delete.
 
 Shut Down, quitting the app and closing the Omarchy window shut Omarchy down over QMP, wait up to a minute, and then stop QEMU, as today. The app shows **Shutting down** until the VM has exited and quits only then.
 
@@ -59,7 +59,7 @@ The plan review counts the space the VM's folder actually uses against free spac
 
 ## One VM
 
-The one app and Try Omarchy open the same VM, in the `Try Omarchy` folder under Application Support, with the same settings. The lock on the VM folder stops both from running it at once; the run mode reports `vm-already-open`, and the one app says that Omarchy is open in Try Omarchy. Either app can boot a VM the other made, and the `try-omarchy` package only upgrades ([integration updates](integration-updates.md)), so an older kit never downgrades the guest.
+The one app and Try Omarchy open the same VM, in the `Try Omarchy` folder under Application Support or the folder chosen in Try Omarchy, with the same settings. Until the person updates Try Omarchy 1.2, the one app reads 1.2's settings at every start ([settings](vm-kit.md#settings)). The lock on the VM folder stops both from running it at once; the run mode reports `vm-already-open`, the one app says that Omarchy is open in Try Omarchy, and Try Omarchy says that it is open in another app, such as Omarchy Installer. Either app can boot a VM the other made, and the `try-omarchy` package only upgrades ([integration updates](integration-updates.md)), so an older kit never downgrades the guest.
 
 The trial's **Open in Try Omarchy** handoff goes away: the one app always runs the VM itself.
 

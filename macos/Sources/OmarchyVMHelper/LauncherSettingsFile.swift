@@ -23,10 +23,13 @@ extension UserDefaults: LauncherSettingsStorage {
 ///
 /// The VM's settings wait for the launcher to mark its folder: a file in an
 /// empty folder someone picked would make the folder look used. Until then the
-/// full app keeps them in `legacy`, where its older settings already are. Each
-/// legacy value moves into the file the first time the file lacks its key,
-/// whichever app writes the file first. The run mode reads the full app's
-/// preferences without changing them, so the full app removes them later.
+/// full app keeps them in `legacy`, where its older settings already are.
+///
+/// A key the file has, even as null, wins; otherwise the legacy value applies.
+/// An older full app can still change `legacy` after another kit has read it,
+/// so only the app that owns `legacy` (`legacyIsWritable`) moves values into
+/// the file and removes them. Any other reader falls back to `legacy` on every
+/// read, and its saves write only the key saved.
 final class LauncherSettingsFile: LauncherSettingsStorage {
     static let schemaVersion = 1
     static let maximumBytes = 65_536
@@ -101,18 +104,22 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
     }
 
     /// Try Omarchy's own preferences, for an app running the kit under
-    /// another identity. Read only: the full app removes them once moved.
+    /// another identity. Read only: the full app moves them into the files.
     static func fullAppPreferences() -> UserDefaults {
         UserDefaults(suiteName: fullAppPreferencesDomain) ?? .standard
     }
 
     func settingData(forKey key: String) -> Data? {
-        guard let folder = readyFolder(creating: hasLegacySettings) else {
-            return adoptsLegacy() ? legacy?.data(forKey: key) : nil
+        guard let folder = readyFolder(creating: movesLegacySettings) else { return legacyData(forKey: key) }
+        if movesLegacySettings { try? withLock(folder) { try adoptLegacySettings(in: folder) } }
+        let settings: [String: Any]
+        switch try? contents(in: folder) {
+        case .settings(_, let stored)?: settings = stored
+        case .absent?, .unreadable?: settings = [:]
+        case nil: return nil
         }
-        if hasLegacySettings { try? withLock(folder) { try adoptLegacySettings(in: folder) } }
-        guard case .settings(_, let settings)? = try? contents(in: folder), let value = settings[key],
-              !(value is NSNull) else { return nil }
+        guard let value = settings[key] else { return legacyData(forKey: key) }
+        guard !(value is NSNull) else { return nil }
         return try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
     }
 
@@ -144,12 +151,16 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
     }
 
     func adoptLegacySettings() {
-        guard hasLegacySettings, let folder = readyFolder(creating: true) else { return }
+        guard movesLegacySettings, let folder = readyFolder(creating: true) else { return }
         try? withLock(folder) { try adoptLegacySettings(in: folder) }
     }
 
-    private var hasLegacySettings: Bool {
-        guard let legacy, adoptsLegacy() else { return false }
+    private func legacyData(forKey key: String) -> Data? {
+        adoptsLegacy() ? legacy?.data(forKey: key) : nil
+    }
+
+    private var movesLegacySettings: Bool {
+        guard legacyIsWritable, let legacy, adoptsLegacy() else { return false }
         return legacyKeys.contains { legacy.object(forKey: $0) != nil }
     }
 
@@ -169,7 +180,7 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
         }
         do {
             try withLock(folder) {
-                if hasLegacySettings { try adoptLegacySettings(in: folder) }
+                if movesLegacySettings { try adoptLegacySettings(in: folder) }
                 var (object, settings) = try storedObject(in: folder)
                 settings[key] = value
                 object["settings"] = settings
@@ -182,7 +193,7 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
 
     /// Call with the folder locked.
     private func adoptLegacySettings(in folder: URL) throws {
-        guard let legacy, adoptsLegacy() else { return }
+        guard legacyIsWritable, let legacy, adoptsLegacy() else { return }
         var (object, settings) = try storedObject(in: folder)
         var adopted = false
         for key in legacyKeys where settings[key] == nil {
@@ -196,7 +207,6 @@ final class LauncherSettingsFile: LauncherSettingsStorage {
             object["settings"] = settings
             try write(object, in: folder)
         }
-        guard legacyIsWritable else { return }
         for key in legacyKeys where settings[key] != nil { legacy.removeObject(forKey: key) }
     }
 

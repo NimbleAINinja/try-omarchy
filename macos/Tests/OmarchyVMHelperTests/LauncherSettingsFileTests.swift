@@ -190,6 +190,92 @@ struct LauncherSettingsFileTests {
         #expect(fixture.legacy.data(forKey: VMResourcePreferenceStore.key) == nil)
     }
 
+    @Test("1.2 changes after the run mode read reach the run mode's next start")
+    func runModeFollowsLaterLegacyChanges() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let folder = fixture.root.appendingPathComponent("Try Omarchy", isDirectory: true)
+        let pointer = {
+            StorageLocationPreferenceStore(storage: LauncherSettingsFile.storageLocation(
+                legacy: fixture.legacy, legacyIsWritable: false, directory: folder))
+        }
+        VMResourcePreferenceStore(defaults: fixture.legacy).save(VMResources(cpuCount: 4, memoryGiB: 8))
+        StorageLocationPreferenceStore(defaults: fixture.legacy)
+            .save(StorageLocationPreference(containerPath: "/Volumes/Old/Omarchy"))
+        #expect(VMResourcePreferenceStore(storage: fixture.vmSettings(writable: false)).load()?.memoryGiB == 8)
+        #expect(pointer().load().containerPath == "/Volumes/Old/Omarchy")
+
+        VMResourcePreferenceStore(defaults: fixture.legacy).save(VMResources(cpuCount: 4, memoryGiB: 12))
+        StorageLocationPreferenceStore(defaults: fixture.legacy)
+            .save(StorageLocationPreference(containerPath: "/Volumes/New/Omarchy"))
+        #expect(VMResourcePreferenceStore(storage: fixture.vmSettings(writable: false)).load()?.memoryGiB == 12)
+        #expect(pointer().load().containerPath == "/Volumes/New/Omarchy")
+
+        StorageLocationPreferenceStore(defaults: fixture.legacy).save(.default)
+        #expect(pointer().load() == .default)
+        #expect(pointer().problem() == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.settingsURL.path))
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+        #expect(fixture.legacy.data(forKey: VMResourcePreferenceStore.key) != nil)
+    }
+
+    @Test("run mode writes first, then 1.2 changes, then the full app migrates: saved keys keep the run mode's values")
+    func runModeWritesThenLegacyChangesThenFullAppMigrates() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        let shared = SharedFolderPreference(path: "/Users/someone/Shared", isEnabled: true)
+        SharedFolderPreferenceStore(defaults: fixture.legacy).save(shared)
+        FullscreenPreferenceStore(defaults: fixture.legacy).save(.defaults)
+        VMResourcePreferenceStore(defaults: fixture.legacy).save(VMResources(cpuCount: 4, memoryGiB: 8))
+
+        let immersiveOff = FullscreenPreferences(isImmersive: false, usesNotch: true)
+        FullscreenPreferenceStore(storage: fixture.vmSettings(writable: false)).save(immersiveOff)
+        let written = try #require(fixture.settingsFile()["settings"] as? [String: Any])
+        #expect(Set(written.keys) == [FullscreenPreferenceStore.key])
+
+        FullscreenPreferenceStore(defaults: fixture.legacy).save(FullscreenPreferences(isImmersive: true, usesNotch: false))
+        VMResourcePreferenceStore(defaults: fixture.legacy).save(VMResources(cpuCount: 6, memoryGiB: 16))
+        let runMode = fixture.vmSettings(writable: false)
+        #expect(FullscreenPreferenceStore(storage: runMode).load() == immersiveOff)
+        #expect(VMResourcePreferenceStore(storage: runMode).load() == VMResources(cpuCount: 6, memoryGiB: 16))
+
+        let fullApp = fixture.vmSettings()
+        #expect(FullscreenPreferenceStore(storage: fullApp).load() == immersiveOff)
+        #expect(VMResourcePreferenceStore(storage: fullApp).load() == VMResources(cpuCount: 6, memoryGiB: 16))
+        #expect(SharedFolderPreferenceStore(storage: fullApp).load() == shared)
+        for key in [SharedFolderPreferenceStore.key, FullscreenPreferenceStore.key, VMResourcePreferenceStore.key] {
+            #expect(fixture.legacy.data(forKey: key) == nil, "\(key)")
+        }
+
+        VMResourcePreferenceStore(defaults: fixture.legacy).save(VMResources(cpuCount: 2, memoryGiB: 4))
+        #expect(VMResourcePreferenceStore(storage: fixture.vmSettings(writable: false)).load()
+                == VMResources(cpuCount: 6, memoryGiB: 16))
+        #expect(VMResourcePreferenceStore(storage: fixture.vmSettings()).load() == VMResources(cpuCount: 6, memoryGiB: 16))
+    }
+
+    @Test("the settings window under the installer writes, then 1.2 changes: the window's values win")
+    func settingsWindowWritesThenLegacyChanges() throws {
+        let fixture = try LauncherSettingsFixture()
+        try fixture.markWorkspace()
+        try VMNetworkPreferenceStore(defaults: fixture.legacy).save(VMNetworkPreferences(mode: .bridged, interface: "en0"))
+        VMResourcePreferenceStore(defaults: fixture.legacy).save(VMResources(cpuCount: 4, memoryGiB: 8))
+
+        let window = fixture.vmSettings(writable: false)
+        let shared = VMNetworkPreferences()
+        try VMNetworkPreferenceStore(storage: window).save(shared)
+        VMResourcePreferenceStore(storage: window).clear()
+
+        try VMNetworkPreferenceStore(defaults: fixture.legacy).save(VMNetworkPreferences(mode: .bridged, interface: "en1"))
+        VMResourcePreferenceStore(defaults: fixture.legacy).save(VMResources(cpuCount: 6, memoryGiB: 16))
+        MemoryPreferenceStore(defaults: fixture.legacy).save(MemoryPreferences(memoryMiB: 12_288))
+
+        for reader in [fixture.vmSettings(writable: false), fixture.vmSettings()] {
+            #expect(VMNetworkPreferenceStore(storage: reader).load() == shared)
+            #expect(VMResourcePreferenceStore(storage: reader).load() == nil)
+        }
+        #expect(fixture.legacy.data(forKey: VMNetworkPreferenceStore.key) == nil)
+    }
+
     @Test("a VM chosen by the environment never takes the person's settings")
     func scratchVMsDoNotAdopt() throws {
         let fixture = try LauncherSettingsFixture()

@@ -104,7 +104,31 @@ Settings are stored in files, not in an app's preferences, so any kit reads the 
 
 Both are private (0600) from their first byte and versioned, and saves lock the folder, so the full app and the run mode never lose each other's changes. A file that is not private, is too large or comes from a newer schema is ignored and never overwritten; for `storage-location.json` that stops the launch instead of using the default folder. A file is a JSON object with `schemaVersion` and `settings`. A save keeps every key it does not know, at the top level and in `settings`, so keys a newer kit adds survive an older kit's save. A setting that was reset is stored as `null`.
 
-Older versions of the full app kept these settings in its UserDefaults (`dev.tryomarchy.native`). Each value moves into the file the first time the file lacks it, whichever app writes the file first. The run mode reads those UserDefaults without changing them, and the full app removes each value once the file has it. A VM folder set by `OMARCHY_QEMU_GPU_STATE_ROOT` never takes them.
+Older versions of the full app, up to Try Omarchy 1.2, keep these settings in its UserDefaults (`dev.tryomarchy.native`), and keep changing them there. One rule decides each setting, in both files:
+
+- A key in the file wins, even as `null`, which is a setting that was reset.
+- Without the key, the value in those UserDefaults applies.
+
+So the files and the UserDefaults never disagree about who wins, whichever app reads them:
+
+- The run mode reads those UserDefaults at every start and never changes them. It follows a change made in 1.2, such as memory, a VM move or **Use default**, until the file has that key.
+- The run mode's own saves, from its settings window, write only the keys they save. They win over 1.2 from then on.
+- The run mode never writes `storage-location.json`, so it follows the VM folder chosen in 1.2 until the full app moves that choice.
+- Only the full app, which owns those UserDefaults, moves values. When it opens the VM it copies each value the file lacks into the file, and removes from its UserDefaults every value the file has. No setting changes when it does, and from then on the files are the only source.
+
+A VM folder set by `OMARCHY_QEMU_GPU_STATE_ROOT` never takes them.
+
+### Finding the VM
+
+The full app can move the VM to another folder or drive, so the VM is not always in the default folder. `TryOmarchyStorage.resolvedRoot()` in the client returns the folder the run mode uses when its configuration has no `storageRoot`:
+
+1. the folder in `storage-location.json`;
+2. else the folder chosen in Try Omarchy 1.2, from its UserDefaults;
+3. else the default folder, `defaultRoot()`.
+
+It reads both without changing them, and checks them as the run mode does. A choice the run mode would refuse, such as a pointer that is not private or comes from a newer version, gives the default folder, and the run mode then stops with `storage-unavailable`. A chosen folder on a drive that is not connected is still that folder, so `hasVM(at:)` is false for it. `resolvedRoot(inApplicationSupport:legacyPreferences:)` takes another home and preferences, for tests.
+
+An embedding app uses `resolvedRoot()` for whether a VM exists (`hasVM(at:)`), the free space it needs (`requiredFreeBytes(at:)` and `freeBytes(at:)`) and the space it takes (`allocatedBytes(at:)`). It deletes a VM only when `resolvedRoot()` is `defaultRoot()`, and deletes only that folder. A VM elsewhere is the full app's to move or delete.
 
 ## Bridged networking
 
@@ -138,4 +162,4 @@ A fetched kit lives outside the embedding app's bundle, and the registered daemo
 
 ## Sharing a VM
 
-The full app and an embedding app open the same VM in the default folder, never at once: the VM folder's lock refuses the second, and the run mode reports `vm-already-open`. Either can boot a VM the other made. The `try-omarchy` package only upgrades, so an older kit never downgrades the guest. A launcher refuses a VM whose `vm.json` names a storage layout it does not know (`storage-layout-unknown`).
+The full app and an embedding app open the same VM, in the default folder or the one chosen in the full app ([finding the VM](#finding-the-vm)), never at once: the VM folder's lock refuses the second. The run mode reports `vm-already-open`, and the full app says that Omarchy is open in another app, such as Omarchy Installer. Either can boot a VM the other made. The `try-omarchy` package only upgrades, so an older kit never downgrades the guest. A launcher refuses a VM whose `vm.json` names a storage layout it does not know (`storage-layout-unknown`).

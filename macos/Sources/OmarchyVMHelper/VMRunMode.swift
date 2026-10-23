@@ -157,8 +157,8 @@ final class VMRunModeController: NSObject, NSApplicationDelegate {
         return environment
     }
 
-    /// The person's settings from the full app move into the VM's file,
-    /// except into a scratch VM chosen by the environment.
+    /// The full app's older settings apply wherever the VM's file has none,
+    /// except to a scratch VM chosen by the environment.
     private func vmSettings(root: URL) -> LauncherSettingsFile {
         let inheritsStateRoot = baseEnvironment[StorageLocationPolicy.environmentKey]?.isEmpty == false
         return LauncherSettingsFile.vmSettings(legacy: LauncherSettingsFile.fullAppPreferences(),
